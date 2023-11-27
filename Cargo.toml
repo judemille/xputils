@@ -1,0 +1,17 @@
+[package]
+name = "xputils"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+byteorder = { optional = true }
+rust_decimal = { version = "1.33", optional = true }
+sevenz-rust = { optional = true, version = "0.5" }
+snafu = "0.7"
+winnow = { version = "0.5", optional = true }
+
+[features]
+dsf = ["dep:byteorder", "dep:sevenz-rust"]
+navdata = ["dep:rust_decimal", "dep:winnow"]
