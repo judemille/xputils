@@ -21,14 +21,14 @@ pub enum TypeSpecificData {
         name: String,
     },
     VOR {
-        freq_100mhz: i32,
+        freq_10khz: i32,
         class: VorClass,
         slaved_variation: Decimal,
         name: String,
     },
     Localizer {
         is_with_ils: bool,
-        freq_100mhz: i32,
+        freq_10khz: i32,
         max_range: i32,
         crs_mag: f32,
         crs_true: f32,
@@ -42,7 +42,7 @@ pub enum TypeSpecificData {
         name: String,
     },
     Glideslope {
-        freq_100mhz: i32,
+        freq_10khz: i32,
         max_range: i32,
         loc_crs_true: f32,
         glide_angle: u16,
@@ -60,11 +60,11 @@ pub enum TypeSpecificData {
     },
     DME {
         display_freq: bool,
-        paired_freq_100mhz: i32,
+        paired_freq_10khz: i32,
         service_volume: u16,
         bias: f32,
         airport_icao: [u8; 4],
-        name: String
+        name: String,
     },
     FPAP {
         channel: u32,
@@ -72,7 +72,7 @@ pub enum TypeSpecificData {
         final_app_crs_true: f32,
         airport_icao: [u8; 4],
         rwy: [u8; 3],
-        perf: String
+        perf: String,
     },
     ThresholdPoint {
         channel: u32,
@@ -81,7 +81,7 @@ pub enum TypeSpecificData {
         glide_path_angle: f32,
         airport_icao: [u8; 4],
         rwy: [u8; 3],
-        ref_path_ident: String
+        ref_path_ident: String,
     },
     GLS {
         channel: u32,
@@ -90,8 +90,8 @@ pub enum TypeSpecificData {
         airport_icao: [u8; 4],
         rwy: [u8; 3],
         /// I think this should be `GLS`.
-        ref_path_ident: String
-    }
+        ref_path_ident: String,
+    },
 }
 
 pub enum NdbClass {
@@ -115,5 +115,5 @@ pub enum VorClass {
 pub enum MarkerType {
     Outer,
     Middle,
-    Inner
+    Inner,
 }

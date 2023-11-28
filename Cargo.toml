@@ -10,7 +10,7 @@ byteorder = { optional = true }
 rust_decimal = { version = "1.33", optional = true }
 sevenz-rust = { optional = true, version = "0.5" }
 snafu = "0.7"
-winnow = { version = "0.5", optional = true }
+winnow = { version = "0.5", optional = true, features = ["simd"] }
 
 [features]
 dsf = ["dep:byteorder", "dep:sevenz-rust"]
