@@ -1,21 +1,31 @@
 [package]
 name = "xputils"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
+description = "Utilities for X-Plane plugins written in Rust. It's like libacfutils, but Rust, and with 100% less HotStart."
+license = "MPL-2.0"
+readme = "README.md"
 edition = "2021"
+rust-version = "1.74"
+repository = "https://github.com/judemille/xputils"
+keywords = ["xplane", "x-plane", "flight sim", "acfutils"]
+categories = ["aerospace::simulation", "data-structures", "game-development", "parser-implementations"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-byteorder = { optional = true }
+byteorder = { version = "1.5", optional = true }
 heapless = "0.8"
-rust_decimal = { version = "1.33", optional = true }
+itertools = "0.12"
+num_enum = "0.7"
+rust_decimal = "1.33"
+rust_decimal_macros = "1.33"
 sevenz-rust = { optional = true, version = "0.5" }
 snafu = "0.7"
 winnow = { version = "0.5", optional = true, features = ["simd"] }
 
 [features]
 dsf = ["dep:byteorder", "dep:sevenz-rust"]
-navdata = ["dep:rust_decimal", "dep:winnow"]
+navdata = ["dep:winnow"]
 
 [lints.rust]
 unsafe_code = "deny"
@@ -28,7 +38,7 @@ semicolon_inside_block = "deny"
 todo = "warn"
 try_err = "deny"
 lossy_float_literal = "deny"
-multiple_crate_versions = "allow"
+cargo = "warn"
 
 [package.metadata.docs.rs]
 targets = [

@@ -2,39 +2,44 @@
 //! Structures and parsers for XPNAV1200 and XPNAV1150.
 //! Older versions of navdata are not supported.
 
-use rust_decimal::Decimal;
-use winnow::{
-    ascii::{digit1, line_ending},
-    combinator::{cut_err, dispatch, fail, repeat_till0, success, todo, peek},
-    error::StrContext,
-    prelude::*,
-    token::{one_of, take, take_till0},
+use std::{
+    io::{BufRead, BufReader, Read},
+    sync::Arc,
 };
 
-pub struct NavData {
-    pub version: XPNavVersion,
-    pub cycle: u16,
-    pub build: u32,
-    pub copyright: String,
-    pub navaids: Vec<Navaid>,
+use itertools::Itertools;
+use num_enum::{FromPrimitive, IntoPrimitive};
+use rust_decimal::prelude::*;
+use rust_decimal_macros::dec;
+use winnow::{
+    ascii::{dec_int, dec_uint, digit1, float, space0, space1},
+    combinator::{delimited, dispatch, fail, peek, preceded, rest},
+    prelude::*,
+    stream::AsChar,
+    token::take_till1,
+};
+
+use crate::navdata::{
+    parse_fixed_str, DataVersion, Header, ParseError, ParseSnafu, UnsupportedVersionSnafu,
+};
+
+pub struct Navaids {
+    pub header: Header,
+    pub entries: Vec<Arc<Navaid>>,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum XPNavVersion {
-    XPNav1150,
-    XPNav1200,
-}
-
+#[derive(Debug)]
 /// A navaid.
 pub struct Navaid {
-    pub lat: Decimal,
-    pub lon: Decimal,
+    pub lat: f64,
+    pub lon: f64,
     pub elevation: i32,
     pub icao_region_code: heapless::String<2>,
-    pub ident: String,
+    pub ident: heapless::String<5>,
     pub type_data: TypeSpecificData,
 }
 
+#[derive(Debug)]
 pub enum TypeSpecificData {
     NDB {
         /// The frequency of this NDB, in whole kHz.
@@ -53,7 +58,7 @@ pub enum TypeSpecificData {
         /// The frequency of this VOR, in 10s of kHz.
         freq_10khz: u32,
         class: VorClass,
-        slaved_variation: Decimal,
+        slaved_variation: f32,
         name: String,
     },
     Localizer {
@@ -75,6 +80,7 @@ pub enum TypeSpecificData {
         freq_10khz: u32,
         max_range: u16,
         loc_crs_true: f32,
+        /// Hundredths of a degree. `u16::MAX` should be interpreted as an error.
         glide_angle: u16,
         airport_icao: heapless::String<4>,
         rwy: heapless::String<3>,
@@ -90,10 +96,10 @@ pub enum TypeSpecificData {
     },
     DME {
         display_freq: bool,
-        paired_freq_10khz: i32,
+        paired_freq_10khz: u32,
         service_volume: u16,
         bias: f32,
-        airport_icao: heapless::String<4>,
+        terminal_region: heapless::String<4>,
         name: String,
     },
     FPAP {
@@ -108,7 +114,8 @@ pub enum TypeSpecificData {
         channel: u32,
         thres_cross_height: f32,
         final_app_crs_true: f32,
-        glide_path_angle: f32,
+        /// Hundredths of a degree. `u16::MAX` should be interpreted as an error.
+        glide_path_angle: u16,
         airport_icao: heapless::String<4>,
         rwy: heapless::String<3>,
         /// For the RNAV (GPS) Y 16C at KSEA, this will return
@@ -123,7 +130,8 @@ pub enum TypeSpecificData {
     GLS {
         channel: u32,
         final_app_crs_true: f32,
-        glide_path_angle: f32,
+        /// Hundredths of a degree. `u16::MAX` should be interpreted as an error.
+        glide_path_angle: u16,
         airport_icao: heapless::String<4>,
         rwy: heapless::String<3>,
         /// I think this should be `GLS`.
@@ -131,13 +139,19 @@ pub enum TypeSpecificData {
     },
 }
 
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, FromPrimitive, IntoPrimitive)]
 pub enum NdbClass {
     Locator = 15,
     LowPower = 25,
     Normal = 50,
     HighPower = 75,
+    #[num_enum(catch_all)]
+    Unrecognized(u8),
 }
 
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, FromPrimitive, IntoPrimitive)]
 pub enum VorClass {
     /// Terminal, low power.
     Terminal = 25,
@@ -147,57 +161,416 @@ pub enum VorClass {
     HighAlt = 130,
     /// Unspecified, but likely high power.
     Unspecified = 125,
+    #[num_enum(catch_all)]
+    /// xputils does not recognize this value.
+    Unrecognized(u8),
 }
 
+#[derive(Debug)]
 pub enum MarkerType {
     Outer,
     Middle,
     Inner,
 }
 
-#[allow(dead_code, unused_variables, clippy::todo)]
-fn parse_xpnav(input: &mut &str) -> PResult<Vec<Navaid>> {
-    one_of(['A', 'I']).parse_next(input)?; // Byte order marker. Irrelevant.
-    line_ending.parse_next(input)?; // Trim off the last line's break.
-    let version = dispatch! {take(4usize);
-        "1150" => success(XPNavVersion::XPNav1150),
-        "1200" => success(XPNavVersion::XPNav1200),
+/// Parse a file with the provided [`Read`].
+/// If your file handle is already [`BufRead`], you should instead call [`parse_file_buffered`].
+///
+/// This is suitable for `earth_nav.dat` and `user_nav.dat`.
+/// # Errors
+/// An error is returned if there is an I/O error, or if the file is malformed.
+pub fn parse_file<F: Read>(file: F) -> Result<Navaids, ParseError> {
+    parse_file_buffered(BufReader::new(file))
+}
+
+/// Parse a file with the provided [`BufRead`].
+/// This is suitable for `earth_nav.dat` and `user_nav.dat`.
+/// # Errors
+/// An error is returned if there is an I/O error, or if the file is malformed.
+pub fn parse_file_buffered<F: Read + BufRead>(file: F) -> Result<Navaids, ParseError> {
+    let mut lines = file.lines();
+    let header = super::parse_header(
+        |md_type| md_type == "NavXP1200" || md_type == "NavXP1150",
+        &mut lines,
+    )?;
+    if !matches!(header.version, DataVersion::XP1150 | DataVersion::XP1200) {
+        return UnsupportedVersionSnafu {
+            version: header.version,
+        }
+        .fail();
+    }
+    let mut lines = lines
+        .filter(|lin| lin.as_ref().map_or(true, |lin| !lin.is_empty()))
+        .peekable();
+    let entries: Result<Vec<_>, ParseError> = lines
+        .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
+        .map(|line| {
+            parse_row.parse(&line?).map_err(|e| {
+                ParseSnafu {
+                    rendered: e.to_string(),
+                    stage: "row",
+                }
+                .build()
+            })
+        })
+        .collect();
+    let entries = entries?;
+    lines
+        .next()
+        .ok_or_else(|| ParseError::MissingLine)
+        .and_then(|last_line| {
+            let last_line = last_line?;
+            if last_line == "99" {
+                Ok(())
+            } else {
+                Err(ParseError::BadLastLine { last_line })
+            }
+        })?;
+    Ok(Navaids { header, entries })
+}
+
+fn parse_row(input: &mut &str) -> PResult<Arc<Navaid>> {
+    let navaid = dispatch! {peek(preceded(space0, dec_uint));
+        2 => parse_ndb,
+        3 => parse_vor,
+        4 | 5 => parse_loc,
+        6 => parse_gs,
+        7..=9 => parse_mkr,
+        12 | 13 => parse_dme,
+        14 => parse_fpap,
+        15 => parse_gls,
+        16 => parse_threshold,
         _ => fail
     }
     .parse_next(input)?;
-    " -  data cycle ".parse_next(input)?;
-    let cycle: u16 = take(4u8)
-        .and_then(digit1)
-        .try_map(|s: &str| s.parse())
-        .parse_next(input)?;
-
-    ", build ".parse_next(input)?;
-    let build: u32 = take(8u8)
-        .and_then(digit1)
-        .try_map(|s: &str| s.parse())
-        .parse_next(input)?;
-
-    ", metadata NavXP".parse_next(input)?;
-    take(4u8).and_then(digit1).parse_next(input)?;
-    '.'.parse_next(input)?;
-    let copyright: String = take_till0(['\r', '\n']).parse_next(input)?.to_string();
-    line_ending.parse_next(input)?; // Trim off the last line's break.
-    let (navaids, end): (Vec<Navaid>, &str) =
-        repeat_till0(cut_err(parse_row).context(StrContext::Label("row")), "99")
-            .parse_next(input)?;
-
-    todo!()
+    Ok(Arc::new(navaid))
 }
 
-fn parse_row(input: &mut &str) -> PResult<Navaid> {
-    let navaid = dispatch!{peek(take(2usize));
-        " 2" => parse_ndb,
-        _ => fail
-    }.parse_next(input)?;
-    line_ending.parse_next(input)?;
-    Ok(navaid)
+struct RowLead {
+    row_code: u8,
+    lat: f64,
+    lon: f64,
+    elevation: i32,
+}
+
+fn parse_row_lead(input: &mut &str) -> PResult<RowLead> {
+    let row_code: u8 = preceded(space0, dec_uint).parse_next(input)?;
+    let lat: f64 = preceded(space1, float).parse_next(input)?;
+    let lon: f64 = preceded(space1, float).parse_next(input)?;
+    let elevation: i32 = preceded(space1, dec_int).parse_next(input)?;
+    Ok(RowLead {
+        row_code,
+        lat,
+        lon,
+        elevation,
+    })
 }
 
 fn parse_ndb(input: &mut &str) -> PResult<Navaid> {
-    todo(input)
+    let lead = parse_row_lead.parse_next(input)?;
+    let freq_khz: u16 = preceded(space1, dec_uint).parse_next(input)?;
+    let class: NdbClass = preceded(space1, dec_uint::<_, u8, _>)
+        .parse_next(input)?
+        .into();
+    let flags: f32 = preceded(space1, float).parse_next(input)?;
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let terminal_region = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let name = delimited(space1, rest, space0)
+        .parse_next(input)?
+        .to_owned();
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::NDB {
+            freq_khz,
+            class,
+            flags,
+            terminal_region,
+            name,
+        },
+    })
+}
+
+fn parse_vor(input: &mut &str) -> PResult<Navaid> {
+    let lead = parse_row_lead.parse_next(input)?;
+    let freq_10khz: u32 = preceded(space1, dec_uint).parse_next(input)?;
+    let class: VorClass = preceded(space1, dec_uint::<_, u8, _>)
+        .parse_next(input)?
+        .into();
+    let slaved_variation: f32 = preceded(space1, float).parse_next(input)?;
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let _ = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let name = delimited(space1, rest, space0)
+        .parse_next(input)?
+        .to_owned();
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::VOR {
+            freq_10khz,
+            class,
+            slaved_variation,
+            name,
+        },
+    })
+}
+
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn parse_loc(input: &mut &str) -> PResult<Navaid> {
+    let lead = parse_row_lead.parse_next(input)?;
+    let is_with_ils = match lead.row_code {
+        4 => true,
+        5 => false,
+        _ => unreachable!("What the hell?"),
+    };
+    let freq_10khz: u32 = preceded(space1, dec_uint).parse_next(input)?;
+    let max_range: u16 = preceded(space1, dec_uint).parse_next(input)?;
+    // Listen, the specification about the way this number works is really funny.
+    let funny_number: Decimal = preceded(space1, take_till1(|c: char| c.is_space()))
+        .try_map(|s: &str| s.parse())
+        .parse_next(input)?;
+    let crs_true = funny_number % dec!(360);
+    let crs_mag: f32 = ((funny_number - crs_true) / dec!(360))
+        .to_f32()
+        .unwrap_or(f32::NAN);
+    let crs_true: f32 = crs_true.to_f32().unwrap_or(f32::NAN);
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let rwy = parse_fixed_str::<3>.parse_next(input)?;
+    let name = delimited(space1, rest, space0)
+        .parse_next(input)?
+        .to_owned();
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::Localizer {
+            is_with_ils,
+            freq_10khz,
+            max_range,
+            crs_mag,
+            crs_true,
+            airport_icao,
+            rwy,
+            name,
+        },
+    })
+}
+
+fn parse_gs(input: &mut &str) -> PResult<Navaid> {
+    let lead = parse_row_lead.parse_next(input)?;
+    let freq_10khz: u32 = preceded(space1, dec_uint).parse_next(input)?;
+    let max_range: u16 = preceded(space1, dec_uint).parse_next(input)?;
+    // Listen, the specification about the way this number works is really funny.
+    let funny_number: Decimal = preceded(space1, take_till1(|c: char| c.is_space()))
+        .try_map(|s: &str| s.parse())
+        .parse_next(input)?;
+    let loc_crs_true = (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
+    let glide_angle = (funny_number / dec!(1000))
+        .trunc()
+        .to_u16()
+        .unwrap_or(u16::MAX);
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let rwy = parse_fixed_str::<3>.parse_next(input)?;
+    let name = delimited(space1, rest, space0)
+        .parse_next(input)?
+        .to_owned();
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::Glideslope {
+            freq_10khz,
+            max_range,
+            loc_crs_true,
+            glide_angle,
+            airport_icao,
+            rwy,
+            name,
+        },
+    })
+}
+
+fn parse_mkr(input: &mut &str) -> PResult<Navaid> {
+    let lead = parse_row_lead.parse_next(input)?;
+    let typ = match lead.row_code {
+        7 => MarkerType::Outer,
+        8 => MarkerType::Middle,
+        9 => MarkerType::Inner,
+        _ => unreachable!("We should not have gotten here."),
+    };
+    let _ = preceded(space1, digit1).parse_next(input)?;
+    let _ = preceded(space1, digit1).parse_next(input)?;
+    let loc_crs_true: f32 = preceded(space1, float).parse_next(input)?;
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let rwy = parse_fixed_str::<3>.parse_next(input)?;
+    let name = parse_fixed_str::<2>.parse_next(input)?;
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::MarkerBeacon {
+            typ,
+            loc_crs_true,
+            airport_icao,
+            rwy,
+            name,
+        },
+    })
+}
+
+fn parse_dme(input: &mut &str) -> PResult<Navaid> {
+    let lead = parse_row_lead.parse_next(input)?;
+    let display_freq = match lead.row_code {
+        12 => false,
+        13 => true,
+        _ => unreachable!(),
+    };
+    let paired_freq_10khz: u32 = preceded(space1, dec_uint).parse_next(input)?;
+    let service_volume: u16 = preceded(space1, dec_uint).parse_next(input)?;
+    let bias: f32 = preceded(space1, float).parse_next(input)?;
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let terminal_region = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let name = delimited(space1, rest, space0)
+        .parse_next(input)?
+        .to_owned();
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::DME {
+            display_freq,
+            paired_freq_10khz,
+            service_volume,
+            bias,
+            terminal_region,
+            name,
+        },
+    })
+}
+
+fn parse_fpap(input: &mut &str) -> PResult<Navaid> {
+    let lead = parse_row_lead.parse_next(input)?;
+    let channel: u32 = preceded(space1, dec_uint).parse_next(input)?;
+    let length_offset: f32 = preceded(space1, float).parse_next(input)?;
+    let final_app_crs_true: f32 = preceded(space1, float).parse_next(input)?;
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let rwy = parse_fixed_str::<3>.parse_next(input)?;
+    let perf = delimited(space1, rest, space0)
+        .parse_next(input)?
+        .to_owned();
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::FPAP {
+            channel,
+            length_offset,
+            final_app_crs_true,
+            airport_icao,
+            rwy,
+            perf,
+        },
+    })
+}
+
+fn parse_gls(input: &mut &str) -> PResult<Navaid> {
+    let lead = parse_row_lead.parse_next(input)?;
+    let channel: u32 = preceded(space1, dec_uint).parse_next(input)?;
+    let _ = preceded(space1, digit1).parse_next(input)?;
+    // Listen, the specification about the way this number works is really funny.
+    let funny_number: Decimal = preceded(space1, take_till1(|c: char| c.is_space()))
+        .try_map(|s: &str| s.parse())
+        .parse_next(input)?;
+    let final_app_crs_true = (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
+    let glide_path_angle = (funny_number / dec!(1000))
+        .trunc()
+        .to_u16()
+        .unwrap_or(u16::MAX);
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let rwy = parse_fixed_str::<3>.parse_next(input)?;
+    let ref_path_ident = delimited(space1, rest, space0)
+        .parse_next(input)?
+        .to_owned();
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::GLS {
+            channel,
+            final_app_crs_true,
+            glide_path_angle,
+            airport_icao,
+            rwy,
+            ref_path_ident,
+        },
+    })
+}
+
+fn parse_threshold(input: &mut &str) -> PResult<Navaid> {
+    let lead = parse_row_lead.parse_next(input)?;
+    let channel: u32 = preceded(space1, dec_uint).parse_next(input)?;
+    let thres_cross_height: f32 = preceded(space1, float).parse_next(input)?;
+    // Listen, the specification about the way this number works is really funny.
+    let funny_number: Decimal = preceded(space1, take_till1(|c: char| c.is_space()))
+        .try_map(|s: &str| s.parse())
+        .parse_next(input)?;
+    let final_app_crs_true = (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
+    let glide_path_angle = (funny_number / dec!(1000))
+        .trunc()
+        .to_u16()
+        .unwrap_or(u16::MAX);
+    let ident = parse_fixed_str::<5>.parse_next(input)?;
+    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
+    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
+    let rwy = parse_fixed_str::<3>.parse_next(input)?;
+    let ref_path_ident = delimited(space1, rest, space0)
+        .parse_next(input)?
+        .to_owned();
+    Ok(Navaid {
+        lat: lead.lat,
+        lon: lead.lon,
+        elevation: lead.elevation,
+        icao_region_code,
+        ident,
+        type_data: TypeSpecificData::ThresholdPoint {
+            channel,
+            thres_cross_height,
+            final_app_crs_true,
+            glide_path_angle,
+            airport_icao,
+            rwy,
+            ref_path_ident,
+        },
+    })
 }

@@ -1,5 +1,3 @@
-#![warn(clippy::all, clippy::pedantic)]
-
 #[cfg(feature = "dsf")]
 pub mod dsf;
 
@@ -7,6 +5,4 @@ pub mod dsf;
 pub mod navdata;
 
 #[cfg(test)]
-mod tests {
-
-}
+mod tests {}
