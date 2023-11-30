@@ -1,10 +1,13 @@
+pub mod airways;
 pub mod fix;
 pub mod nav;
 
-use snafu::prelude::*;
+use snafu::{prelude::*, Backtrace};
 use std::{
-    io::{BufRead, Error as IoError, Lines, Read},
+    fs::File,
+    io::{BufRead, BufReader, Error as IoError, Lines, Read},
     ops::Deref,
+    path::Path,
     sync::Arc,
 };
 use winnow::{
@@ -13,8 +16,85 @@ use winnow::{
     dispatch,
     error::ContextError,
     prelude::*,
-    token::{take, take_until1, take_till1}, stream::AsChar,
+    stream::AsChar,
+    token::{take, take_till1, take_until1},
 };
+
+use crate::navdata::{fix::{Fixes, Fix}, nav::{Navaids, Navaid}};
+
+pub struct NavigationalData {
+    fixes: Fixes,
+    navaids: Navaids,
+}
+
+impl NavigationalData {
+    /// Parses all navdata from the X-Plane `Custom Data` folder.
+    /// # Errors
+    /// Returns an [`Err`] if there is an I/O error, or if the data is malformed.
+    pub fn build_data_from_folder(folder: &Path) -> Result<Self, ParseError> {
+        let fix_file = BufReader::new(File::open(folder.join("earth_fix.dat"))?);
+        let mut fixes = fix::parse_file_buffered(fix_file)?;
+        let user_fixes = folder.join("user_fix.dat");
+        if user_fixes.exists() {
+            let user_fixes = BufReader::new(File::open(user_fixes)?);
+            let user_fixes = fix::parse_file_buffered(user_fixes)?;
+            let main_fixes_entries = fixes.entries_mut();
+            for user_fix in user_fixes.entries {
+                // Essentially, check if there is a fix in the same area, with the same ident.
+                let matching_main_fix_pos = main_fixes_entries.iter().position(|fix| {
+                    fix.ident == user_fix.ident
+                        && fix.icao_region == user_fix.icao_region
+                        && fix.terminal_area == user_fix.terminal_area
+                });
+                if let Some(pos) = matching_main_fix_pos {
+                    main_fixes_entries[pos] = user_fix;
+                } else {
+                    main_fixes_entries.push(user_fix);
+                }
+            }
+        }
+        let nav_file = BufReader::new(File::open(folder.join("earth_nav.dat"))?);
+        let mut navaids = nav::parse_file_buffered(nav_file)?;
+        let user_nav = folder.join("user_nav.dat");
+        if user_nav.exists() {
+            let user_nav = BufReader::new(File::open(user_nav)?);
+            let user_nav = nav::parse_file_buffered(user_nav)?;
+            let main_nav_entries = navaids.entries_mut();
+            for user_navaid in user_nav.entries {
+                // Essentially, check if there is a matching navaid of the same type, in the same place, with the same ident.
+                let matching_main_navaid_pos =
+                    main_nav_entries.iter().position(|navaid| {
+                        navaid.ident == user_navaid.ident
+                            && navaid.icao_region_code == user_navaid.icao_region_code
+                            && std::mem::discriminant(&navaid.type_data)
+                                == std::mem::discriminant(&user_navaid.type_data)
+                    });
+                if let Some(pos) = matching_main_navaid_pos {
+                    main_nav_entries[pos] = user_navaid;
+                } else {
+                    main_nav_entries.push(user_navaid);
+                }
+            }
+        }
+        Ok(Self { fixes, navaids })
+    }
+
+    #[must_use]
+    pub fn fixes(&self) -> &Fixes {
+        &self.fixes
+    }
+
+    #[must_use]
+    pub fn navaids(&self) -> &Navaids {
+        &self.navaids
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Waypoint {
+    Fix(Arc<Fix>),
+    Navaid(Arc<Navaid>)
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum DataVersion {
@@ -36,19 +116,32 @@ pub struct Header {
 pub enum ParseError {
     #[snafu(display("An I/O error has occurred!"))]
     #[snafu(context(false))]
-    Io { source: IoError },
+    Io {
+        source: IoError,
+        backtrace: Backtrace,
+    },
     #[snafu(display("Error occurred when parsing `{stage}`: \n\n{rendered}"))]
-    Parse { rendered: String, stage: String },
+    Parse {
+        rendered: String,
+        stage: String,
+        backtrace: Backtrace,
+    },
     #[snafu(display("The byte order marker was an unexpected value: {bom}"))]
-    BadBOM { bom: String },
+    BadBOM { bom: String, backtrace: Backtrace },
     #[snafu(display("The last line of this file was unexpected:\n{last_line}"))]
-    BadLastLine { last_line: String },
+    BadLastLine {
+        last_line: String,
+        backtrace: Backtrace,
+    },
     #[snafu(display("A line was expected, but the file had no more."))]
     MissingLine,
     #[snafu(display(
         "The data version {version:?} is not supported by the parser for this format."
     ))]
-    UnsupportedVersion { version: DataVersion },
+    UnsupportedVersion {
+        version: DataVersion,
+        backtrace: Backtrace,
+    },
 }
 
 #[derive(Debug, Snafu)]

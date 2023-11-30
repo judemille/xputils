@@ -2,26 +2,46 @@
 //! Structures and parsers for XPFIX1200 and XPFIX1101.
 //! Older versions of navdata are not supported.
 
-use std::{io::{BufRead, BufReader, Read}, sync::Arc};
+use std::{
+    io::{BufRead, Read},
+    sync::Arc,
+};
 
 use itertools::Itertools;
+use snafu::ensure;
 use winnow::{
     ascii::{dec_uint, float, space0, space1},
-    combinator::{preceded, rest},
+    combinator::{opt, preceded, rest},
     prelude::*,
     PResult,
 };
 
-use crate::navdata::{parse_fixed_str, Header, ParseError, ParseSnafu, StringTooLarge};
+use crate::navdata::{parse_fixed_str, Header, ParseError, ParseSnafu, StringTooLarge, BadLastLineSnafu};
 
 #[derive(Debug)]
 pub struct Fixes {
-    pub header: Header,
-    pub entries: Vec<Arc<Waypoint>>,
+    header: Header,
+    pub(super) entries: Vec<Arc<Fix>>,
+}
+
+impl Fixes {
+    #[must_use]
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &Vec<Arc<Fix>> {
+        &self.entries
+    }
+
+    pub fn entries_mut(&mut self) -> &mut Vec<Arc<Fix>> {
+        &mut self.entries
+    }
 }
 
 #[derive(Debug)]
-pub struct Waypoint {
+pub struct Fix {
     pub lat: f64,
     pub lon: f64,
     pub ident: heapless::String<8>,
@@ -30,18 +50,18 @@ pub struct Waypoint {
     /// The ICAO region code, according to ICAO document No. 7910.
     pub icao_region: heapless::String<2>,
     /// The type of waypoint this is.
-    pub typ: WptType,
+    pub typ: FixType,
     /// The function of this waypoint.
-    pub func: WptFunction,
+    pub func: FixFunction,
     /// The type of procedure this waypoint belongs to.
-    pub proc: WptProcedure,
+    pub proc: FixProcedure,
     /// The printed or spoken name of this waypoint.
-    pub printed_spoken_name: heapless::String<32>,
+    pub printed_spoken_name: Option<heapless::String<32>>,
 }
 
 #[derive(Debug)]
 /// First column of the "Waypoint Type" field.
-pub enum WptType {
+pub enum FixType {
     /// ARC Center Fix Waypoint
     ArcCenterFix,
     /// Combined Named Intersection and RNAV
@@ -68,7 +88,7 @@ pub enum WptType {
 
 #[derive(Debug)]
 /// Second column of the "Waypoint Type" field.
-pub enum WptFunction {
+pub enum FixFunction {
     /// Final Approach Fix
     FinalAppFix,
     /// Initial and Final Approach Fix
@@ -113,7 +133,7 @@ pub enum WptFunction {
 
 #[derive(Debug)]
 /// What procedures this fix is on, if any.
-pub enum WptProcedure {
+pub enum FixProcedure {
     /// A Standard Instrument Departure.
     SID,
     /// A Standard Terminal Arrival Route.
@@ -127,21 +147,9 @@ pub enum WptProcedure {
     Unrecognized(u8),
 }
 
-/// Parse a file with the provided [`Read`].
-/// If your file handle is already [`BufRead`], you should instead call [`parse_file_buffered`].
-///
-/// This is suitable for `earth_fix.dat` and `user_fix.dat`.
-/// # Errors
-/// An error is returned if there is an I/O error, or if the file is malformed.
-pub fn parse_file<F: Read>(file: F) -> Result<Fixes, ParseError> {
-    parse_file_buffered(BufReader::new(file))
-}
-
-/// Parse a file with the provided [`BufRead`].
-/// This is suitable for `earth_fix.dat` and `user_fix.dat`.
-/// # Errors
-/// An error is returned if there is an I/O error, or if the file is malformed.
-pub fn parse_file_buffered<F: Read + BufRead>(file: F) -> Result<Fixes, ParseError> {
+pub(super) fn parse_file_buffered<F: Read + BufRead>(
+    file: F,
+) -> Result<Fixes, ParseError> {
     let mut lines = file.lines();
     let header = super::parse_header(
         |md_type| md_type == "FixXP1100" || md_type == "FixXP1200",
@@ -157,7 +165,7 @@ pub fn parse_file_buffered<F: Read + BufRead>(file: F) -> Result<Fixes, ParseErr
             parse_row.parse(&line?).map_err(|e| {
                 ParseSnafu {
                     rendered: e.to_string(),
-                    stage: "row",
+                    stage: "fix row",
                 }
                 .build()
             })
@@ -169,16 +177,13 @@ pub fn parse_file_buffered<F: Read + BufRead>(file: F) -> Result<Fixes, ParseErr
         .ok_or_else(|| ParseError::MissingLine)
         .and_then(|last_line| {
             let last_line = last_line?;
-            if last_line == "99" {
-                Ok(())
-            } else {
-                Err(ParseError::BadLastLine { last_line })
-            }
+            ensure!(last_line == "99", BadLastLineSnafu { last_line });
+            Ok(())
         })?;
     Ok(Fixes { header, entries })
 }
 
-fn parse_row(input: &mut &str) -> PResult<Arc<Waypoint>> {
+fn parse_row(input: &mut &str) -> PResult<Arc<Fix>> {
     let lat: f64 = preceded(space0, float).parse_next(input)?;
     let lon: f64 = preceded(space1, float).parse_next(input)?;
     let ident = parse_fixed_str::<8>.parse_next(input)?;
@@ -186,12 +191,13 @@ fn parse_row(input: &mut &str) -> PResult<Arc<Waypoint>> {
     let icao_region = parse_fixed_str::<2>.parse_next(input)?;
     let funny_flags: u32 = preceded(space1, dec_uint).parse_next(input)?;
     let (typ, func, proc) = parse_wpt_flags(funny_flags, terminal_area != "ENRT");
-    let printed_spoken_name = preceded(space1, rest)
-        .try_map(|id: &str| {
-            heapless::String::<32>::try_from(id).map_err(|()| StringTooLarge)
+    let printed_spoken_name = opt(preceded(space1, rest))
+        .try_map(|id: Option<&str>| {
+            id.map(|id| heapless::String::<32>::try_from(id).map_err(|()| StringTooLarge))
+                .transpose()
         })
         .parse_next(input)?;
-    Ok(Arc::new(Waypoint {
+    Ok(Arc::new(Fix {
         lat,
         lon,
         ident,
@@ -204,61 +210,61 @@ fn parse_row(input: &mut &str) -> PResult<Arc<Waypoint>> {
     }))
 }
 
-fn parse_wpt_flags(flags: u32, terminal: bool) -> (WptType, WptFunction, WptProcedure) {
+fn parse_wpt_flags(flags: u32, terminal: bool) -> (FixType, FixFunction, FixProcedure) {
     let bytes = flags.to_le_bytes();
     let typ = match bytes[0] {
-        b'A' => WptType::ArcCenterFix,
-        b'C' => WptType::NamedIntxAndRnav,
-        b'I' => WptType::UnnamedChartedIntx,
-        b'M' => WptType::MiddleMarker,
-        b'N' => WptType::NdbAsWpt,
-        b'O' => WptType::OuterMarker,
-        b'R' => WptType::NamedIntx,
-        b'V' => WptType::VfrWpt,
-        b'W' => WptType::RnavWpt,
-        b' ' => WptType::Unspecified,
-        _ => WptType::Unrecognized(bytes[0]),
+        b'A' => FixType::ArcCenterFix,
+        b'C' => FixType::NamedIntxAndRnav,
+        b'I' => FixType::UnnamedChartedIntx,
+        b'M' => FixType::MiddleMarker,
+        b'N' => FixType::NdbAsWpt,
+        b'O' => FixType::OuterMarker,
+        b'R' => FixType::NamedIntx,
+        b'V' => FixType::VfrWpt,
+        b'W' => FixType::RnavWpt,
+        b' ' => FixType::Unspecified,
+        _ => FixType::Unrecognized(bytes[0]),
     };
     let func = match bytes[1] {
-        b'A' => WptFunction::FinalAppFix,
-        b'B' => WptFunction::InitialAndFinalAppFix,
-        b'C' => WptFunction::FinalAppCrsFix,
-        b'D' => WptFunction::IntermediateAppFix,
-        b'E' => WptFunction::OffRouteIntxFAA,
-        b'F' => WptFunction::OffRouteIntx,
-        b'I' => WptFunction::InitialAppFix,
-        b'K' => WptFunction::FinalAppCrsFixAtIAF,
-        b'L' => WptFunction::FinalAppCrsFixAtIF,
-        b'M' => WptFunction::MissedAppFix,
-        b'N' => WptFunction::InitialAppFixAndMAF,
-        b'O' => WptFunction::OceanicEntryExitWpt,
+        b'A' => FixFunction::FinalAppFix,
+        b'B' => FixFunction::InitialAndFinalAppFix,
+        b'C' => FixFunction::FinalAppCrsFix,
+        b'D' => FixFunction::IntermediateAppFix,
+        b'E' => FixFunction::OffRouteIntxFAA,
+        b'F' => FixFunction::OffRouteIntx,
+        b'I' => FixFunction::InitialAppFix,
+        b'K' => FixFunction::FinalAppCrsFixAtIAF,
+        b'L' => FixFunction::FinalAppCrsFixAtIF,
+        b'M' => FixFunction::MissedAppFix,
+        b'N' => FixFunction::InitialAppFixAndMAF,
+        b'O' => FixFunction::OceanicEntryExitWpt,
         b'P' => {
             if terminal {
-                WptFunction::UnnamedStepdownFix
+                FixFunction::UnnamedStepdownFix
             } else {
-                WptFunction::PitchAndCatchPoint
+                FixFunction::PitchAndCatchPoint
             }
         },
         b'S' => {
             if terminal {
-                WptFunction::NamedStepdownFix
+                FixFunction::NamedStepdownFix
             } else {
-                WptFunction::AacaaAndSuaWpt
+                FixFunction::AacaaAndSuaWpt
             }
         },
-        b'U' => WptFunction::FirUirCtrlIntx,
-        b'V' => WptFunction::LatLonFullDegIntx,
-        b'W' => WptFunction::LatLonHalfDegIntx,
-        b' ' => WptFunction::Unspecified,
-        _ => WptFunction::Unrecognized(bytes[1]),
+        b'U' => FixFunction::FirUirCtrlIntx,
+        b'V' => FixFunction::LatLonFullDegIntx,
+        b'W' => FixFunction::LatLonHalfDegIntx,
+        b' ' => FixFunction::Unspecified,
+        _ => FixFunction::Unrecognized(bytes[1]),
     };
     let proc = match bytes[2] {
-        b'D' => WptProcedure::SID,
-        b'E' => WptProcedure::STAR,
-        b'F' => WptProcedure::Approach,
-        b'Z' => WptProcedure::Multiple,
-        b' ' => WptProcedure::Unspecified,
-        _ => WptProcedure::Unrecognized(bytes[2]),
+        b'D' => FixProcedure::SID,
+        b'E' => FixProcedure::STAR,
+        b'F' => FixProcedure::Approach,
+        b'Z' => FixProcedure::Multiple,
+        b' ' => FixProcedure::Unspecified,
+        _ => FixProcedure::Unrecognized(bytes[2]),
     };
     (typ, func, proc)
 }

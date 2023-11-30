@@ -1,11 +1,14 @@
 use std::{fs::File, path::Path};
 
 use snafu::{prelude::*, Whatever};
+use xputils::navdata::fix::{FixFunction, FixType};
 
 #[snafu::report]
 fn main() -> Result<(), Whatever> {
     let earth_fix_dat = Path::new(file!())
-        .join("../../xp_nav/earth_fix.dat")
+        .parent()
+        .unwrap()
+        .join("../xp_nav/earth_fix.dat")
         .canonicalize()
         .whatever_context("Could not canonicalize path!")?;
     println!("File path: {}", earth_fix_dat.display());
@@ -14,10 +17,14 @@ fn main() -> Result<(), Whatever> {
     let fixes = xputils::navdata::fix::parse_file(earth_fix_dat)
         .whatever_context("Could not parse earth_nav.dat!")?;
 
-    println!("\n\nMetadata: {:#?}\n\n", fixes.header);
+    println!("\n\nMetadata: {:#?}\n\n", fixes.header());
     for fix in fixes
-        .entries
+        .entries()
         .iter()
+        .filter(|fix| {
+            !matches!(fix.func, FixFunction::Unspecified)
+                && !matches!(fix.typ, FixType::Unspecified)
+        })
         .take(20)
     {
         println!("\nFix: {fix:#?}");

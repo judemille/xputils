@@ -3,7 +3,7 @@
 //! Older versions of navdata are not supported.
 
 use std::{
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, Read},
     sync::Arc,
 };
 
@@ -11,6 +11,7 @@ use itertools::Itertools;
 use num_enum::{FromPrimitive, IntoPrimitive};
 use rust_decimal::prelude::*;
 use rust_decimal_macros::dec;
+use snafu::ensure;
 use winnow::{
     ascii::{dec_int, dec_uint, digit1, float, space0, space1},
     combinator::{delimited, dispatch, fail, peek, preceded, rest},
@@ -20,12 +21,29 @@ use winnow::{
 };
 
 use crate::navdata::{
-    parse_fixed_str, DataVersion, Header, ParseError, ParseSnafu, UnsupportedVersionSnafu,
+    parse_fixed_str, BadLastLineSnafu, DataVersion, Header, ParseError, ParseSnafu,
+    UnsupportedVersionSnafu,
 };
 
 pub struct Navaids {
-    pub header: Header,
-    pub entries: Vec<Arc<Navaid>>,
+    header: Header,
+    pub(super) entries: Vec<Arc<Navaid>>,
+}
+
+impl Navaids {
+    #[must_use]
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &Vec<Arc<Navaid>> {
+        &self.entries
+    }
+
+    pub fn entries_mut(&mut self) -> &mut Vec<Arc<Navaid>> {
+        &mut self.entries
+    }
 }
 
 #[derive(Debug)]
@@ -173,21 +191,9 @@ pub enum MarkerType {
     Inner,
 }
 
-/// Parse a file with the provided [`Read`].
-/// If your file handle is already [`BufRead`], you should instead call [`parse_file_buffered`].
-///
-/// This is suitable for `earth_nav.dat` and `user_nav.dat`.
-/// # Errors
-/// An error is returned if there is an I/O error, or if the file is malformed.
-pub fn parse_file<F: Read>(file: F) -> Result<Navaids, ParseError> {
-    parse_file_buffered(BufReader::new(file))
-}
-
-/// Parse a file with the provided [`BufRead`].
-/// This is suitable for `earth_nav.dat` and `user_nav.dat`.
-/// # Errors
-/// An error is returned if there is an I/O error, or if the file is malformed.
-pub fn parse_file_buffered<F: Read + BufRead>(file: F) -> Result<Navaids, ParseError> {
+pub(super) fn parse_file_buffered<F: Read + BufRead>(
+    file: F,
+) -> Result<Navaids, ParseError> {
     let mut lines = file.lines();
     let header = super::parse_header(
         |md_type| md_type == "NavXP1200" || md_type == "NavXP1150",
@@ -208,7 +214,7 @@ pub fn parse_file_buffered<F: Read + BufRead>(file: F) -> Result<Navaids, ParseE
             parse_row.parse(&line?).map_err(|e| {
                 ParseSnafu {
                     rendered: e.to_string(),
-                    stage: "row",
+                    stage: "navaid row",
                 }
                 .build()
             })
@@ -220,11 +226,8 @@ pub fn parse_file_buffered<F: Read + BufRead>(file: F) -> Result<Navaids, ParseE
         .ok_or_else(|| ParseError::MissingLine)
         .and_then(|last_line| {
             let last_line = last_line?;
-            if last_line == "99" {
-                Ok(())
-            } else {
-                Err(ParseError::BadLastLine { last_line })
-            }
+            ensure!(last_line == "99", BadLastLineSnafu { last_line });
+            Ok(())
         })?;
     Ok(Navaids { header, entries })
 }

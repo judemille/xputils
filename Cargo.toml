@@ -24,6 +24,7 @@ snafu = "0.7"
 winnow = { version = "0.5", optional = true, features = ["simd"] }
 
 [features]
+backtraces = ["snafu/backtraces"]
 dsf = ["dep:byteorder", "dep:sevenz-rust"]
 navdata = ["dep:winnow"]
 
@@ -47,3 +48,11 @@ targets = [
     "aarch64-apple-darwin",
     "x86_64-pc-windows-msvc",
 ]
+
+[[example]]
+name = "fix"
+required-features = ["backtraces", "navdata"]
+
+[[example]]
+name = "navaids"
+required-features = ["backtraces", "navdata"]
