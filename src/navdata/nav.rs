@@ -2,10 +2,7 @@
 //! Structures and parsers for XPNAV1200 and XPNAV1150.
 //! Older versions of navdata are not supported.
 
-use std::{
-    io::{BufRead, Read},
-    sync::Arc,
-};
+use std::io::{BufRead, Read};
 
 use itertools::Itertools;
 use num_enum::{FromPrimitive, IntoPrimitive};
@@ -18,6 +15,7 @@ use winnow::{
     prelude::*,
     stream::AsChar,
     token::take_till1,
+    trace::trace,
 };
 
 use crate::navdata::{
@@ -25,41 +23,25 @@ use crate::navdata::{
     UnsupportedVersionSnafu,
 };
 
-pub struct Navaids {
-    header: Header,
-    pub(super) entries: Vec<Arc<Navaid>>,
+pub(super) struct Navaids {
+    pub header: Header,
+    pub entries: Vec<Navaid>,
 }
 
-impl Navaids {
-    #[must_use]
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
-    #[must_use]
-    pub fn entries(&self) -> &Vec<Arc<Navaid>> {
-        &self.entries
-    }
-
-    pub fn entries_mut(&mut self) -> &mut Vec<Arc<Navaid>> {
-        &mut self.entries
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// A navaid.
 pub struct Navaid {
     pub lat: f64,
     pub lon: f64,
     pub elevation: i32,
-    pub icao_region_code: heapless::String<2>,
+    pub icao_region: heapless::String<2>,
     pub ident: heapless::String<5>,
     pub type_data: TypeSpecificData,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypeSpecificData {
-    NDB {
+    Ndb {
         /// The frequency of this NDB, in whole kHz.
         freq_khz: u16,
         class: NdbClass,
@@ -72,7 +54,7 @@ pub enum TypeSpecificData {
         /// The name of this NDB.
         name: String,
     },
-    VOR {
+    Vor {
         /// The frequency of this VOR, in 10s of kHz.
         freq_10khz: u32,
         class: VorClass,
@@ -112,7 +94,7 @@ pub enum TypeSpecificData {
         rwy: heapless::String<3>,
         name: heapless::String<2>,
     },
-    DME {
+    Dme {
         display_freq: bool,
         paired_freq_10khz: u32,
         service_volume: u16,
@@ -120,7 +102,7 @@ pub enum TypeSpecificData {
         terminal_region: heapless::String<4>,
         name: String,
     },
-    FPAP {
+    Fpap {
         channel: u32,
         length_offset: f32,
         final_app_crs_true: f32,
@@ -145,7 +127,7 @@ pub enum TypeSpecificData {
         /// `GP` means unspecified or GLS.
         ref_path_ident: String,
     },
-    GLS {
+    Gls {
         channel: u32,
         final_app_crs_true: f32,
         /// Hundredths of a degree. `u16::MAX` should be interpreted as an error.
@@ -184,7 +166,7 @@ pub enum VorClass {
     Unrecognized(u8),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum MarkerType {
     Outer,
     Middle,
@@ -199,25 +181,33 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
         |md_type| md_type == "NavXP1200" || md_type == "NavXP1150",
         &mut lines,
     )?;
-    if !matches!(header.version, DataVersion::XP1150 | DataVersion::XP1200) {
-        return UnsupportedVersionSnafu {
+
+    ensure!(
+        matches!(header.version, DataVersion::XP1150 | DataVersion::XP1200),
+        UnsupportedVersionSnafu {
             version: header.version,
         }
-        .fail();
-    }
+    );
+
     let mut lines = lines
         .filter(|lin| lin.as_ref().map_or(true, |lin| !lin.is_empty()))
         .peekable();
+
+    #[allow(clippy::let_and_return)] // Have to let and return to fix a lifetime error.
     let entries: Result<Vec<_>, ParseError> = lines
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .map(|line| {
-            parse_row.parse(&line?).map_err(|e| {
-                ParseSnafu {
-                    rendered: e.to_string(),
-                    stage: "navaid row",
-                }
-                .build()
-            })
+            let line = line?;
+            let ret = trace("parse navaid row", parse_row)
+                .parse(&line)
+                .map_err(|e| {
+                    ParseSnafu {
+                        rendered: e.to_string(),
+                        stage: "navaid row",
+                    }
+                    .build()
+                });
+            ret
         })
         .collect();
     let entries = entries?;
@@ -232,21 +222,24 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
     Ok(Navaids { header, entries })
 }
 
-fn parse_row(input: &mut &str) -> PResult<Arc<Navaid>> {
-    let navaid = dispatch! {peek(preceded(space0, dec_uint));
-        2 => parse_ndb,
-        3 => parse_vor,
-        4 | 5 => parse_loc,
-        6 => parse_gs,
-        7..=9 => parse_mkr,
-        12 | 13 => parse_dme,
-        14 => parse_fpap,
-        15 => parse_gls,
-        16 => parse_threshold,
-        _ => fail
-    }
+fn parse_row(input: &mut &str) -> PResult<Navaid> {
+    let navaid = trace(
+        "match row code and then parse type",
+        dispatch! {peek(preceded(space0, dec_uint));
+            2 => trace("NDB", parse_ndb),
+            3 => trace("VOR", parse_vor),
+            4 | 5 => trace("localizer", parse_loc),
+            6 => trace("glideslope", parse_gs),
+            7..=9 => trace("marker beacon", parse_mkr),
+            12 | 13 => trace("DME", parse_dme),
+            14 => trace("FPAP", parse_fpap),
+            15 => trace("GLS", parse_gls),
+            16 => trace("landing threshold point", parse_threshold),
+            _ => fail
+        },
+    )
     .parse_next(input)?;
-    Ok(Arc::new(navaid))
+    Ok(navaid)
 }
 
 struct RowLead {
@@ -257,10 +250,11 @@ struct RowLead {
 }
 
 fn parse_row_lead(input: &mut &str) -> PResult<RowLead> {
-    let row_code: u8 = preceded(space0, dec_uint).parse_next(input)?;
-    let lat: f64 = preceded(space1, float).parse_next(input)?;
-    let lon: f64 = preceded(space1, float).parse_next(input)?;
-    let elevation: i32 = preceded(space1, dec_int).parse_next(input)?;
+    let row_code: u8 = trace("row code", preceded(space0, dec_uint)).parse_next(input)?;
+    let lat: f64 = trace("latitude", preceded(space1, float)).parse_next(input)?;
+    let lon: f64 = trace("longitude", preceded(space1, float)).parse_next(input)?;
+    let elevation: i32 =
+        trace("elevation", preceded(space1, dec_int)).parse_next(input)?;
     Ok(RowLead {
         row_code,
         lat,
@@ -270,25 +264,28 @@ fn parse_row_lead(input: &mut &str) -> PResult<RowLead> {
 }
 
 fn parse_ndb(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
-    let freq_khz: u16 = preceded(space1, dec_uint).parse_next(input)?;
-    let class: NdbClass = preceded(space1, dec_uint::<_, u8, _>)
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
+    let freq_khz: u16 =
+        trace("frequency, kHz", preceded(space1, dec_uint)).parse_next(input)?;
+    let class: NdbClass = trace("class", preceded(space1, dec_uint::<_, u8, _>))
         .parse_next(input)?
         .into();
-    let flags: f32 = preceded(space1, float).parse_next(input)?;
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let terminal_region = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let name = delimited(space1, rest, space0)
+    let flags: f32 = trace("flags", preceded(space1, float)).parse_next(input)?;
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let terminal_region =
+        trace("terminal region", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
-        type_data: TypeSpecificData::NDB {
+        type_data: TypeSpecificData::Ndb {
             freq_khz,
             class,
             flags,
@@ -299,25 +296,28 @@ fn parse_ndb(input: &mut &str) -> PResult<Navaid> {
 }
 
 fn parse_vor(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
-    let freq_10khz: u32 = preceded(space1, dec_uint).parse_next(input)?;
-    let class: VorClass = preceded(space1, dec_uint::<_, u8, _>)
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
+    let freq_10khz: u32 =
+        trace("frequency, 10 kHz", preceded(space1, dec_uint)).parse_next(input)?;
+    let class: VorClass = trace("class", preceded(space1, dec_uint::<_, u8, _>))
         .parse_next(input)?
         .into();
-    let slaved_variation: f32 = preceded(space1, float).parse_next(input)?;
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let _ = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let name = delimited(space1, rest, space0)
+    let slaved_variation: f32 =
+        trace("slaved variation, degrees", preceded(space1, float)).parse_next(input)?;
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let _ = trace("ensure terminal region for VOR is ENRT", " ENRT").parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
-        type_data: TypeSpecificData::VOR {
+        type_data: TypeSpecificData::Vor {
             freq_10khz,
             class,
             slaved_variation,
@@ -328,35 +328,42 @@ fn parse_vor(input: &mut &str) -> PResult<Navaid> {
 
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
 fn parse_loc(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let is_with_ils = match lead.row_code {
         4 => true,
         5 => false,
         _ => unreachable!("What the hell?"),
     };
-    let freq_10khz: u32 = preceded(space1, dec_uint).parse_next(input)?;
-    let max_range: u16 = preceded(space1, dec_uint).parse_next(input)?;
+    let freq_10khz: u32 =
+        trace("frequency, 10 kHz", preceded(space1, dec_uint)).parse_next(input)?;
+    let max_range: u16 =
+        trace("maximum reception range", preceded(space1, dec_uint)).parse_next(input)?;
     // Listen, the specification about the way this number works is really funny.
-    let funny_number: Decimal = preceded(space1, take_till1(|c: char| c.is_space()))
-        .try_map(|s: &str| s.parse())
-        .parse_next(input)?;
+    let funny_number: Decimal = trace(
+        "funny course true + mag number",
+        preceded(space1, take_till1(|c: char| c.is_space())),
+    )
+    .try_map(|s: &str| s.parse())
+    .parse_next(input)?;
     let crs_true = funny_number % dec!(360);
     let crs_mag: f32 = ((funny_number - crs_true) / dec!(360))
         .to_f32()
         .unwrap_or(f32::NAN);
     let crs_true: f32 = crs_true.to_f32().unwrap_or(f32::NAN);
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let rwy = parse_fixed_str::<3>.parse_next(input)?;
-    let name = delimited(space1, rest, space0)
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let airport_icao =
+        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
         type_data: TypeSpecificData::Localizer {
             is_with_ils,
@@ -372,30 +379,37 @@ fn parse_loc(input: &mut &str) -> PResult<Navaid> {
 }
 
 fn parse_gs(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
-    let freq_10khz: u32 = preceded(space1, dec_uint).parse_next(input)?;
-    let max_range: u16 = preceded(space1, dec_uint).parse_next(input)?;
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
+    let freq_10khz: u32 =
+        trace("frequency, 10 kHz", preceded(space1, dec_uint)).parse_next(input)?;
+    let max_range: u16 =
+        trace("maximum reception range", preceded(space1, dec_uint)).parse_next(input)?;
     // Listen, the specification about the way this number works is really funny.
-    let funny_number: Decimal = preceded(space1, take_till1(|c: char| c.is_space()))
-        .try_map(|s: &str| s.parse())
-        .parse_next(input)?;
+    let funny_number: Decimal = trace(
+        "funny course true + glide angle number",
+        preceded(space1, take_till1(|c: char| c.is_space())),
+    )
+    .try_map(|s: &str| s.parse())
+    .parse_next(input)?;
     let loc_crs_true = (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
     let glide_angle = (funny_number / dec!(1000))
         .trunc()
         .to_u16()
         .unwrap_or(u16::MAX);
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let rwy = parse_fixed_str::<3>.parse_next(input)?;
-    let name = delimited(space1, rest, space0)
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let airport_icao =
+        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
         type_data: TypeSpecificData::Glideslope {
             freq_10khz,
@@ -410,26 +424,30 @@ fn parse_gs(input: &mut &str) -> PResult<Navaid> {
 }
 
 fn parse_mkr(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let typ = match lead.row_code {
         7 => MarkerType::Outer,
         8 => MarkerType::Middle,
         9 => MarkerType::Inner,
         _ => unreachable!("We should not have gotten here."),
     };
-    let _ = preceded(space1, digit1).parse_next(input)?;
-    let _ = preceded(space1, digit1).parse_next(input)?;
-    let loc_crs_true: f32 = preceded(space1, float).parse_next(input)?;
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let rwy = parse_fixed_str::<3>.parse_next(input)?;
-    let name = parse_fixed_str::<2>.parse_next(input)?;
+    let _ = trace("unused number", preceded(space1, digit1)).parse_next(input)?;
+    let _ = trace("unused number", preceded(space1, digit1)).parse_next(input)?;
+    let loc_crs_true: f32 =
+        trace("localizer course, true degrees", preceded(space1, float))
+            .parse_next(input)?;
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let airport_icao =
+        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let name = trace("name", parse_fixed_str::<2>).parse_next(input)?;
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
         type_data: TypeSpecificData::MarkerBeacon {
             typ,
@@ -442,28 +460,33 @@ fn parse_mkr(input: &mut &str) -> PResult<Navaid> {
 }
 
 fn parse_dme(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let display_freq = match lead.row_code {
         12 => false,
         13 => true,
         _ => unreachable!(),
     };
-    let paired_freq_10khz: u32 = preceded(space1, dec_uint).parse_next(input)?;
-    let service_volume: u16 = preceded(space1, dec_uint).parse_next(input)?;
-    let bias: f32 = preceded(space1, float).parse_next(input)?;
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let terminal_region = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let name = delimited(space1, rest, space0)
+    let paired_freq_10khz: u32 =
+        trace("paired frequency, 10 kHz", preceded(space1, dec_uint))
+            .parse_next(input)?;
+    let service_volume: u16 =
+        trace("service volume", preceded(space1, dec_uint)).parse_next(input)?;
+    let bias: f32 = trace("bias", preceded(space1, float)).parse_next(input)?;
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let terminal_region =
+        trace("terminal region", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
-        type_data: TypeSpecificData::DME {
+        type_data: TypeSpecificData::Dme {
             display_freq,
             paired_freq_10khz,
             service_volume,
@@ -475,24 +498,31 @@ fn parse_dme(input: &mut &str) -> PResult<Navaid> {
 }
 
 fn parse_fpap(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
-    let channel: u32 = preceded(space1, dec_uint).parse_next(input)?;
-    let length_offset: f32 = preceded(space1, float).parse_next(input)?;
-    let final_app_crs_true: f32 = preceded(space1, float).parse_next(input)?;
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let rwy = parse_fixed_str::<3>.parse_next(input)?;
-    let perf = delimited(space1, rest, space0)
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
+    let channel: u32 = trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
+    let length_offset: f32 =
+        trace("length offset", preceded(space1, float)).parse_next(input)?;
+    let final_app_crs_true: f32 = trace(
+        "final approach course, true degrees",
+        preceded(space1, float),
+    )
+    .parse_next(input)?;
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let airport_icao =
+        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let perf = trace("performance type", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
-        type_data: TypeSpecificData::FPAP {
+        type_data: TypeSpecificData::Fpap {
             channel,
             length_offset,
             final_app_crs_true,
@@ -504,32 +534,37 @@ fn parse_fpap(input: &mut &str) -> PResult<Navaid> {
 }
 
 fn parse_gls(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
-    let channel: u32 = preceded(space1, dec_uint).parse_next(input)?;
-    let _ = preceded(space1, digit1).parse_next(input)?;
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
+    let channel: u32 = trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
+    let _ = trace("unused number", preceded(space1, digit1)).parse_next(input)?;
     // Listen, the specification about the way this number works is really funny.
-    let funny_number: Decimal = preceded(space1, take_till1(|c: char| c.is_space()))
-        .try_map(|s: &str| s.parse())
-        .parse_next(input)?;
+    let funny_number: Decimal = trace(
+        "funny final approach course + glide path angle number",
+        preceded(space1, take_till1(|c: char| c.is_space())),
+    )
+    .try_map(|s: &str| s.parse())
+    .parse_next(input)?;
     let final_app_crs_true = (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
     let glide_path_angle = (funny_number / dec!(1000))
         .trunc()
         .to_u16()
         .unwrap_or(u16::MAX);
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let rwy = parse_fixed_str::<3>.parse_next(input)?;
-    let ref_path_ident = delimited(space1, rest, space0)
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let airport_icao =
+        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let ref_path_ident = trace("ref path ident", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
-        type_data: TypeSpecificData::GLS {
+        type_data: TypeSpecificData::Gls {
             channel,
             final_app_crs_true,
             glide_path_angle,
@@ -541,30 +576,36 @@ fn parse_gls(input: &mut &str) -> PResult<Navaid> {
 }
 
 fn parse_threshold(input: &mut &str) -> PResult<Navaid> {
-    let lead = parse_row_lead.parse_next(input)?;
-    let channel: u32 = preceded(space1, dec_uint).parse_next(input)?;
-    let thres_cross_height: f32 = preceded(space1, float).parse_next(input)?;
+    let lead = trace("row lead", parse_row_lead).parse_next(input)?;
+    let channel: u32 = trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
+    let thres_cross_height: f32 =
+        trace("threshold crossing height", preceded(space1, float)).parse_next(input)?;
     // Listen, the specification about the way this number works is really funny.
-    let funny_number: Decimal = preceded(space1, take_till1(|c: char| c.is_space()))
-        .try_map(|s: &str| s.parse())
-        .parse_next(input)?;
+    let funny_number: Decimal = trace(
+        "funny final approach course + glide path angle number",
+        preceded(space1, take_till1(|c: char| c.is_space())),
+    )
+    .try_map(|s: &str| s.parse())
+    .parse_next(input)?;
     let final_app_crs_true = (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
     let glide_path_angle = (funny_number / dec!(1000))
         .trunc()
         .to_u16()
         .unwrap_or(u16::MAX);
-    let ident = parse_fixed_str::<5>.parse_next(input)?;
-    let airport_icao = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region_code = parse_fixed_str::<2>.parse_next(input)?;
-    let rwy = parse_fixed_str::<3>.parse_next(input)?;
-    let ref_path_ident = delimited(space1, rest, space0)
+    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let airport_icao =
+        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region_code =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let ref_path_ident = trace("ref path ident", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
         elevation: lead.elevation,
-        icao_region_code,
+        icao_region: icao_region_code,
         ident,
         type_data: TypeSpecificData::ThresholdPoint {
             channel,

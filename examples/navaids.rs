@@ -21,7 +21,7 @@ fn main() -> Result<(), Whatever> {
     for vor in navaids
         .entries()
         .iter()
-        .filter(|navaid| matches!(navaid.type_data, TypeSpecificData::VOR { .. }))
+        .filter(|navaid| matches!(navaid.type_data, TypeSpecificData::Vor { .. }))
         .take(5)
     {
         println!("\nNavaid: {vor:#?}");
@@ -30,7 +30,7 @@ fn main() -> Result<(), Whatever> {
     for ndb in navaids
         .entries()
         .iter()
-        .filter(|navaid| matches!(navaid.type_data, TypeSpecificData::NDB { .. }))
+        .filter(|navaid| matches!(navaid.type_data, TypeSpecificData::Ndb { .. }))
         .take(5)
     {
         println!("\nNavaid: {ndb:#?}");

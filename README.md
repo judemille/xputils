@@ -30,4 +30,3 @@ happy to work out a fair agreement between you/your organization and myself.
 My goal is to make it perfectly palatable for commercial entities to use the utilities I have created, whilst ensuring that my work
 does not go uncompensated or unacknowledged. I have no interest in milking you for profits, or giving you trouble.
 
-

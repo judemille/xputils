@@ -2,10 +2,7 @@
 //! Structures and parsers for XPFIX1200 and XPFIX1101.
 //! Older versions of navdata are not supported.
 
-use std::{
-    io::{BufRead, Read},
-    sync::Arc,
-};
+use std::io::{BufRead, Read};
 
 use itertools::Itertools;
 use snafu::ensure;
@@ -13,40 +10,28 @@ use winnow::{
     ascii::{dec_uint, float, space0, space1},
     combinator::{opt, preceded, rest},
     prelude::*,
+    trace::trace,
     PResult,
 };
 
-use crate::navdata::{parse_fixed_str, Header, ParseError, ParseSnafu, StringTooLarge, BadLastLineSnafu};
+use crate::navdata::{
+    parse_fixed_str, BadLastLineSnafu, DataVersion, Header, ParseError, ParseSnafu,
+    StringTooLarge, UnsupportedVersionSnafu,
+};
 
 #[derive(Debug)]
-pub struct Fixes {
-    header: Header,
-    pub(super) entries: Vec<Arc<Fix>>,
+pub(super) struct Fixes {
+    pub header: Header,
+    pub entries: Vec<Fix>,
 }
 
-impl Fixes {
-    #[must_use]
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
-    #[must_use]
-    pub fn entries(&self) -> &Vec<Arc<Fix>> {
-        &self.entries
-    }
-
-    pub fn entries_mut(&mut self) -> &mut Vec<Arc<Fix>> {
-        &mut self.entries
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Fix {
     pub lat: f64,
     pub lon: f64,
     pub ident: heapless::String<8>,
     /// The airport terminal area this waypoint belongs to, or `ENRT` for enroute waypoints.
-    pub terminal_area: heapless::String<4>,
+    pub terminal_region: heapless::String<4>,
     /// The ICAO region code, according to ICAO document No. 7910.
     pub icao_region: heapless::String<2>,
     /// The type of waypoint this is.
@@ -59,7 +44,7 @@ pub struct Fix {
     pub printed_spoken_name: Option<heapless::String<32>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 /// First column of the "Waypoint Type" field.
 pub enum FixType {
     /// ARC Center Fix Waypoint
@@ -86,7 +71,7 @@ pub enum FixType {
     Unrecognized(u8),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 /// Second column of the "Waypoint Type" field.
 pub enum FixFunction {
     /// Final Approach Fix
@@ -131,7 +116,7 @@ pub enum FixFunction {
     Unrecognized(u8),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 /// What procedures this fix is on, if any.
 pub enum FixProcedure {
     /// A Standard Instrument Departure.
@@ -155,20 +140,29 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
         |md_type| md_type == "FixXP1100" || md_type == "FixXP1200",
         &mut lines,
     )?;
-
+    ensure!(
+        matches!(header.version, DataVersion::XP1101 | DataVersion::XP1200),
+        UnsupportedVersionSnafu {
+            version: header.version,
+        }
+    );
     let mut lines = lines
         .filter(|lin| lin.as_ref().map_or(true, |lin| !lin.is_empty()))
         .peekable();
+
+    #[allow(clippy::let_and_return)] // Have to let and return to fix a lifetime error.
     let entries: Result<Vec<_>, ParseError> = lines
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .map(|line| {
-            parse_row.parse(&line?).map_err(|e| {
+            let line = line?;
+            let ret = trace("fix row", parse_row).parse(&line).map_err(|e| {
                 ParseSnafu {
                     rendered: e.to_string(),
                     stage: "fix row",
                 }
                 .build()
-            })
+            });
+            ret
         })
         .collect();
     let entries = entries?;
@@ -183,13 +177,15 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
     Ok(Fixes { header, entries })
 }
 
-fn parse_row(input: &mut &str) -> PResult<Arc<Fix>> {
-    let lat: f64 = preceded(space0, float).parse_next(input)?;
-    let lon: f64 = preceded(space1, float).parse_next(input)?;
-    let ident = parse_fixed_str::<8>.parse_next(input)?;
-    let terminal_area = parse_fixed_str::<4>.parse_next(input)?;
-    let icao_region = parse_fixed_str::<2>.parse_next(input)?;
-    let funny_flags: u32 = preceded(space1, dec_uint).parse_next(input)?;
+fn parse_row(input: &mut &str) -> PResult<Fix> {
+    let lat: f64 = trace("latitude", preceded(space0, float)).parse_next(input)?;
+    let lon: f64 = trace("longitude", preceded(space1, float)).parse_next(input)?;
+    let ident = trace("ident", parse_fixed_str::<8>).parse_next(input)?;
+    let terminal_area = trace("terminal area", parse_fixed_str::<4>).parse_next(input)?;
+    let icao_region =
+        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let funny_flags: u32 =
+        trace("waypoint flags", preceded(space1, dec_uint)).parse_next(input)?;
     let (typ, func, proc) = parse_wpt_flags(funny_flags, terminal_area != "ENRT");
     let printed_spoken_name = opt(preceded(space1, rest))
         .try_map(|id: Option<&str>| {
@@ -197,17 +193,17 @@ fn parse_row(input: &mut &str) -> PResult<Arc<Fix>> {
                 .transpose()
         })
         .parse_next(input)?;
-    Ok(Arc::new(Fix {
+    Ok(Fix {
         lat,
         lon,
         ident,
-        terminal_area,
+        terminal_region: terminal_area,
         icao_region,
         typ,
         func,
         proc,
         printed_spoken_name,
-    }))
+    })
 }
 
 fn parse_wpt_flags(flags: u32, terminal: bool) -> (FixType, FixFunction, FixProcedure) {
