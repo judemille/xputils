@@ -1,4 +1,4 @@
-image: archlinux
+image: debian/testing
 oauth: git.sr.ht/REPOSITORIES:RW git.sr.ht/PROFILE:RO
 packages:
   - hut
