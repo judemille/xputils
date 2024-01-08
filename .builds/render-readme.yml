@@ -1,0 +1,17 @@
+image: archlinux
+oauth: git.sr.ht/REPOSITORIES:RW git.sr.ht/PROFILE:RO
+packages:
+  - hut
+  - pandoc
+sources:
+  - https://git.sr.ht/~jdemille/xputils
+tasks:
+  - update-readme: |
+      if [[ "refs/heads/trunk" == "$GIT_REF" ]]; then
+        echo "On trunk branch -- updating README."
+        cd xputils
+        pandoc -o README.html README.md
+        hut git update --readme README.html
+      else
+        echo "Not on trunk -- skipping."
+      fi

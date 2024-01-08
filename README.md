@@ -20,10 +20,10 @@ Ukraine, and opposes any and all human rights violations.
 - Support any far-right parties or politicians (including Vladimir Putin, the GOP,
   AfD, FdI, and similar)
 
-I cannot stop you, but anyone observed to meet the above listed criteria who interacts with the project
-will be blocked from interaction. Additionally, any individual or organization determined
-to fall within one of the above criteria will be denied any requests for a
-[closed-source license.](#closed-source-use)
+I cannot stop you, but anyone observed to meet the above listed criteria who interacts
+with the project will be blocked from interaction. Additionally, any individual or
+organization determined to fall within one of the above criteria will be denied any
+requests for a [closed-source license.](#closed-source-use)
 
 ## License
 
