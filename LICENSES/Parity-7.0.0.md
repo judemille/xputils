@@ -1,6 +1,6 @@
 # The Parity Public License 7.0.0
 
-Contributor: Julia DeMille
+Contributor: Julia DeMille [US-IL]
 
 Source Code: https://git.sr.ht/~jdemille/xputils
 

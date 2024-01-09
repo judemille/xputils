@@ -1,1 +1,0 @@
-licenses/Parity-7.0.0.md

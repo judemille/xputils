@@ -1,0 +1,12 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: xputils
+Upstream-Contact: Julia DeMille <me@jdemille.com>
+Source: https://git.sr.ht/~jdemille/xputils
+
+# Sample paragraph, commented out:
+
+Files:
+  xp_nav/README
+  Cargo.lock
+Copyright: 2024 Julia DeMille <me@jdemille.com>
+License: Parity-7.0.0

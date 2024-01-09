@@ -1,8 +1,12 @@
+# SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+#
+# SPDX-License-Identifier: Parity-7.0.0
+
 [package]
 name = "xputils"
 version = "0.1.0-alpha.1"
 description = "Utilities for X-Plane plugins written in Rust. It's like libacfutils, but Rust, and with 100% less HotStart."
-license = "MPL-2.0"
+license = "Parity-7.0.0"
 readme = "README.md"
 edition = "2021"
 rust-version = "1.74"
@@ -27,7 +31,7 @@ petgraph = { version = "0.6", optional = true, default-features = false }
 rust_decimal = "1.33"
 rust_decimal_macros = "1.33"
 sevenz-rust = { optional = true, version = "0.5" }
-snafu = "0.7"
+snafu = "0.8"
 winnow = { version = "0.5", optional = true, features = ["simd"] }
 
 [build-dependencies]

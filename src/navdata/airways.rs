@@ -1,5 +1,9 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+//
+// SPDX-License-Identifier: Parity-7.0.0
+
 //! Parser and data structures for the X-Plane airways file.
 //! Only `XPAWY1101`/`AwyXP1100` is supported.
 

@@ -1,4 +1,8 @@
 #![allow(clippy::module_name_repetitions)]
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+//
+// SPDX-License-Identifier: Parity-7.0.0
+
 //! Structures and parsers for XPNAV1200 and XPNAV1150.
 //! Older versions of navdata are not supported.
 
