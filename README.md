@@ -33,7 +33,7 @@ requests for a [closed-source license.](#closed-source-use)
 
 ## License
 
-This project is licensed under the [Parity Public License, version 7.0.0.](LICENSES/Parity-7.0.0.md)
+This project is licensed under the [Parity Public License, version 7.0.0.](https://paritylicense.com/versions/7.0.0)
 The license is pretty concise and human-readable, so go give it a read.
 
 ### Closed-Source Use
