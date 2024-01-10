@@ -197,20 +197,22 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
         .filter(|lin| lin.as_ref().map_or(true, |lin| !lin.is_empty()))
         .peekable();
 
-    #[allow(clippy::let_and_return)] // Have to let and return to fix a lifetime error.
+    #[allow(clippy::let_and_return)]
+    // Have to let and return to fix a lifetime error.
     let entries: Result<Vec<_>, ParseError> = lines
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .map(|line| {
             let line = line?;
-            let ret = trace("parse navaid row", parse_row)
-                .parse(&line)
-                .map_err(|e| {
-                    ParseSnafu {
-                        rendered: e.to_string(),
-                        stage: "navaid row",
-                    }
-                    .build()
-                });
+            let ret =
+                trace("parse navaid row", parse_row)
+                    .parse(&line)
+                    .map_err(|e| {
+                        ParseSnafu {
+                            rendered: e.to_string(),
+                            stage: "navaid row",
+                        }
+                        .build()
+                    });
             ret
         })
         .collect();
@@ -254,7 +256,8 @@ struct RowLead {
 }
 
 fn parse_row_lead(input: &mut &str) -> PResult<RowLead> {
-    let row_code: u8 = trace("row code", preceded(space0, dec_uint)).parse_next(input)?;
+    let row_code: u8 =
+        trace("row code", preceded(space0, dec_uint)).parse_next(input)?;
     let lat: f64 = trace("latitude", preceded(space1, float)).parse_next(input)?;
     let lon: f64 = trace("longitude", preceded(space1, float)).parse_next(input)?;
     let elevation: i32 =
@@ -307,9 +310,11 @@ fn parse_vor(input: &mut &str) -> PResult<Navaid> {
         .parse_next(input)?
         .into();
     let slaved_variation: f32 =
-        trace("slaved variation, degrees", preceded(space1, float)).parse_next(input)?;
+        trace("slaved variation, degrees", preceded(space1, float))
+            .parse_next(input)?;
     let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let _ = trace("ensure terminal region for VOR is ENRT", " ENRT").parse_next(input)?;
+    let _ = trace("ensure terminal region for VOR is ENRT", " ENRT")
+        .parse_next(input)?;
     let icao_region_code =
         trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
     let name = trace("name", delimited(space1, rest, space0))
@@ -341,7 +346,8 @@ fn parse_loc(input: &mut &str) -> PResult<Navaid> {
     let freq_10khz: u32 =
         trace("frequency, 10 kHz", preceded(space1, dec_uint)).parse_next(input)?;
     let max_range: u16 =
-        trace("maximum reception range", preceded(space1, dec_uint)).parse_next(input)?;
+        trace("maximum reception range", preceded(space1, dec_uint))
+            .parse_next(input)?;
     // Listen, the specification about the way this number works is really funny.
     let funny_number: Decimal = trace(
         "funny course true + mag number",
@@ -387,7 +393,8 @@ fn parse_gs(input: &mut &str) -> PResult<Navaid> {
     let freq_10khz: u32 =
         trace("frequency, 10 kHz", preceded(space1, dec_uint)).parse_next(input)?;
     let max_range: u16 =
-        trace("maximum reception range", preceded(space1, dec_uint)).parse_next(input)?;
+        trace("maximum reception range", preceded(space1, dec_uint))
+            .parse_next(input)?;
     // Listen, the specification about the way this number works is really funny.
     let funny_number: Decimal = trace(
         "funny course true + glide angle number",
@@ -503,7 +510,8 @@ fn parse_dme(input: &mut &str) -> PResult<Navaid> {
 
 fn parse_fpap(input: &mut &str) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
-    let channel: u32 = trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
+    let channel: u32 =
+        trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
     let length_offset: f32 =
         trace("length offset", preceded(space1, float)).parse_next(input)?;
     let final_app_crs_true: f32 = trace(
@@ -539,7 +547,8 @@ fn parse_fpap(input: &mut &str) -> PResult<Navaid> {
 
 fn parse_gls(input: &mut &str) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
-    let channel: u32 = trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
+    let channel: u32 =
+        trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
     let _ = trace("unused number", preceded(space1, digit1)).parse_next(input)?;
     // Listen, the specification about the way this number works is really funny.
     let funny_number: Decimal = trace(
@@ -548,7 +557,8 @@ fn parse_gls(input: &mut &str) -> PResult<Navaid> {
     )
     .try_map(|s: &str| s.parse())
     .parse_next(input)?;
-    let final_app_crs_true = (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
+    let final_app_crs_true =
+        (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
     let glide_path_angle = (funny_number / dec!(1000))
         .trunc()
         .to_u16()
@@ -581,9 +591,11 @@ fn parse_gls(input: &mut &str) -> PResult<Navaid> {
 
 fn parse_threshold(input: &mut &str) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
-    let channel: u32 = trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
+    let channel: u32 =
+        trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
     let thres_cross_height: f32 =
-        trace("threshold crossing height", preceded(space1, float)).parse_next(input)?;
+        trace("threshold crossing height", preceded(space1, float))
+            .parse_next(input)?;
     // Listen, the specification about the way this number works is really funny.
     let funny_number: Decimal = trace(
         "funny final approach course + glide path angle number",
@@ -591,7 +603,8 @@ fn parse_threshold(input: &mut &str) -> PResult<Navaid> {
     )
     .try_map(|s: &str| s.parse())
     .parse_next(input)?;
-    let final_app_crs_true = (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
+    let final_app_crs_true =
+        (funny_number % dec!(1000)).to_f32().unwrap_or(f32::NAN);
     let glide_path_angle = (funny_number / dec!(1000))
         .trunc()
         .to_u16()

@@ -16,8 +16,8 @@ fn main() -> Result<(), Whatever> {
         .canonicalize()
         .whatever_context("Could not canonicalize path!")?;
     println!("File path: {}", earth_fix_dat.display());
-    let earth_fix_dat =
-        File::open(earth_fix_dat).whatever_context("Could not open earth_fix.dat!")?;
+    let earth_fix_dat = File::open(earth_fix_dat)
+        .whatever_context("Could not open earth_fix.dat!")?;
     let fixes = xputils::navdata::fix::parse_file(earth_fix_dat)
         .whatever_context("Could not parse earth_nav.dat!")?;
 

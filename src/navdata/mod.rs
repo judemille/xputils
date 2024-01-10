@@ -112,7 +112,8 @@ impl NavigationalData {
         }
 
         let airway_file = BufReader::new(File::open(folder.join("earth_awy.dat"))?);
-        let airway_header = airways::parse_file_buffered(airway_file, &mut nav_graph)?;
+        let airway_header =
+            airways::parse_file_buffered(airway_file, &mut nav_graph)?;
         ensure!(
             airway_header.cycle == established_cycle,
             CycleMismatchSnafu {
@@ -249,15 +250,16 @@ fn parse_header<F: Read + BufRead>(
         .ok_or(ParseError::MissingLine)
         .and_then(|line| {
             let line = line?;
-            let ret = parse_header_after_bom(verify_type)
-                .parse(&line)
-                .map_err(|e| {
-                    ParseSnafu {
-                        rendered: e.to_string(),
-                        stage: "header",
-                    }
-                    .build()
-                });
+            let ret =
+                parse_header_after_bom(verify_type)
+                    .parse(&line)
+                    .map_err(|e| {
+                        ParseSnafu {
+                            rendered: e.to_string(),
+                            stage: "header",
+                        }
+                        .build()
+                    });
             ret // Weird lifetime error if I don't do this.
         })
 }
@@ -312,7 +314,9 @@ fn parse_header_after_bom<'a>(
     }
 }
 
-fn parse_fixed_str<const N: usize>(input: &mut &str) -> PResult<heapless::String<N>> {
+fn parse_fixed_str<const N: usize>(
+    input: &mut &str,
+) -> PResult<heapless::String<N>> {
     #[cfg(feature = "RUSTC_IS_NIGHTLY")]
     const TRACE_NOTE: &str = concatcp!("parse string of maximum length `", N, "`");
     #[cfg(not(feature = "RUSTC_IS_NIGHTLY"))]

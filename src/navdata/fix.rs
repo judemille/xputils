@@ -154,7 +154,8 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
         .filter(|lin| lin.as_ref().map_or(true, |lin| !lin.is_empty()))
         .peekable();
 
-    #[allow(clippy::let_and_return)] // Have to let and return to fix a lifetime error.
+    #[allow(clippy::let_and_return)]
+    // Have to let and return to fix a lifetime error.
     let entries: Result<Vec<_>, ParseError> = lines
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .map(|line| {
@@ -185,7 +186,8 @@ fn parse_row(input: &mut &str) -> PResult<Fix> {
     let lat: f64 = trace("latitude", preceded(space0, float)).parse_next(input)?;
     let lon: f64 = trace("longitude", preceded(space1, float)).parse_next(input)?;
     let ident = trace("ident", parse_fixed_str::<8>).parse_next(input)?;
-    let terminal_area = trace("terminal area", parse_fixed_str::<4>).parse_next(input)?;
+    let terminal_area =
+        trace("terminal area", parse_fixed_str::<4>).parse_next(input)?;
     let icao_region =
         trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
     let funny_flags: u32 =
@@ -193,8 +195,10 @@ fn parse_row(input: &mut &str) -> PResult<Fix> {
     let (typ, func, proc) = parse_wpt_flags(funny_flags, terminal_area != "ENRT");
     let printed_spoken_name = opt(preceded(space1, rest))
         .try_map(|id: Option<&str>| {
-            id.map(|id| heapless::String::<32>::try_from(id).map_err(|()| StringTooLarge))
-                .transpose()
+            id.map(|id| {
+                heapless::String::<32>::try_from(id).map_err(|()| StringTooLarge)
+            })
+            .transpose()
         })
         .parse_next(input)?;
     Ok(Fix {
@@ -210,7 +214,10 @@ fn parse_row(input: &mut &str) -> PResult<Fix> {
     })
 }
 
-fn parse_wpt_flags(flags: u32, terminal: bool) -> (FixType, FixFunction, FixProcedure) {
+fn parse_wpt_flags(
+    flags: u32,
+    terminal: bool,
+) -> (FixType, FixFunction, FixProcedure) {
     let bytes = flags.to_le_bytes();
     let typ = match bytes[0] {
         b'A' => FixType::ArcCenterFix,

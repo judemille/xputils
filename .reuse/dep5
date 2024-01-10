@@ -3,8 +3,6 @@ Upstream-Name: xputils
 Upstream-Contact: Julia DeMille <me@jdemille.com>
 Source: https://git.sr.ht/~jdemille/xputils
 
-# Sample paragraph, commented out:
-
 Files:
   xp_nav/README
   Cargo.lock

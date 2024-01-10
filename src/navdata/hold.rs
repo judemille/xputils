@@ -71,13 +71,14 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .try_for_each(|line| -> Result<(), ParseError> {
             let line = line?;
-            let parsed_edge = trace("hold row", parse_row).parse(&line).map_err(|e| {
-                ParseSnafu {
-                    rendered: e.to_string(),
-                    stage: "hold row",
-                }
-                .build()
-            })?;
+            let parsed_edge =
+                trace("hold row", parse_row).parse(&line).map_err(|e| {
+                    ParseSnafu {
+                        rendered: e.to_string(),
+                        stage: "hold row",
+                    }
+                    .build()
+                })?;
 
             let hold_point_idx = nav_graph
                 .node_indices()
@@ -121,13 +122,15 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
             };
 
             #[allow(illegal_floating_point_literal_pattern)]
-            let leg_length = match (parsed_edge.leg_time_min, parsed_edge.leg_length_nm) {
-                (minutes, 0f32) => LegLength::Minutes(minutes),
-                (0f32, dme) => LegLength::DME(dme),
-                (minutes, dme) => {
-                    return ConflictingHoldLegLengthsSnafu { minutes, dme }.fail()
-                },
-            };
+            let leg_length =
+                match (parsed_edge.leg_time_min, parsed_edge.leg_length_nm) {
+                    (minutes, 0f32) => LegLength::Minutes(minutes),
+                    (0f32, dme) => LegLength::DME(dme),
+                    (minutes, dme) => {
+                        return ConflictingHoldLegLengthsSnafu { minutes, dme }
+                            .fail()
+                    },
+                };
 
             let min_alt_ft = if parsed_edge.min_alt_ft == 0 {
                 None
@@ -211,15 +214,16 @@ fn parse_row(input: &mut &str) -> PResult<ParsedEdge> {
     let leg_length_nm: f32 =
         trace("leg length, NM", preceded(space1, float)).parse_next(input)?;
 
-    let direction: char = trace("direction", preceded(space1, any)).parse_next(input)?;
+    let direction: char =
+        trace("direction", preceded(space1, any)).parse_next(input)?;
 
-    let min_alt_ft: u32 =
-        trace("minimum altitude, ft", preceded(space1, dec_uint)).parse_next(input)?;
-    let max_alt_ft: u32 =
-        trace("maximum altitude, ft", preceded(space1, dec_uint)).parse_next(input)?;
+    let min_alt_ft: u32 = trace("minimum altitude, ft", preceded(space1, dec_uint))
+        .parse_next(input)?;
+    let max_alt_ft: u32 = trace("maximum altitude, ft", preceded(space1, dec_uint))
+        .parse_next(input)?;
 
-    let max_spd_kts: u16 =
-        trace("maximum speed, NM/h", preceded(space1, dec_uint)).parse_next(input)?;
+    let max_spd_kts: u16 = trace("maximum speed, NM/h", preceded(space1, dec_uint))
+        .parse_next(input)?;
     Ok(ParsedEdge {
         hold_point: ParsedNodeRef {
             ident: hold_point_ident,

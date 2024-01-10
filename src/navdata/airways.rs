@@ -22,9 +22,9 @@ use winnow::{
 };
 
 use crate::navdata::{
-    match_wpt_predicate, parse_fixed_str, BadLastLineSnafu, Header, InvalidAwyDirSnafu,
-    NavEdge, NavEntry, ParseError, ParseSnafu, ParsedNodeRef, ParsedNodeRefType,
-    ReferencedNonexistentWptSnafu,
+    match_wpt_predicate, parse_fixed_str, BadLastLineSnafu, Header,
+    InvalidAwyDirSnafu, NavEdge, NavEntry, ParseError, ParseSnafu, ParsedNodeRef,
+    ParsedNodeRefType, ReferencedNonexistentWptSnafu,
 };
 
 #[derive(Debug, Clone)]
@@ -129,7 +129,8 @@ fn parse_row(input: &mut &str) -> PResult<ParsedAwyEdge> {
     let first_ident =
         trace("first waypoint ident", parse_fixed_str::<5>).parse_next(input)?;
     let first_icao_region =
-        trace("first waypoint ICAO region", parse_fixed_str::<2>).parse_next(input)?;
+        trace("first waypoint ICAO region", parse_fixed_str::<2>)
+            .parse_next(input)?;
     let first_typ: ParsedNodeRefType = trace(
         "first waypoint type",
         dispatch! {preceded(space1, dec_uint);
@@ -144,7 +145,8 @@ fn parse_row(input: &mut &str) -> PResult<ParsedAwyEdge> {
     let second_ident =
         trace("second waypoint ident", parse_fixed_str::<5>).parse_next(input)?;
     let second_icao_region =
-        trace("second waypoint ICAO region", parse_fixed_str::<2>).parse_next(input)?;
+        trace("second waypoint ICAO region", parse_fixed_str::<2>)
+            .parse_next(input)?;
     let second_typ: ParsedNodeRefType = trace(
         "second waypoint type",
         dispatch! {preceded(space1, dec_uint);
@@ -156,7 +158,8 @@ fn parse_row(input: &mut &str) -> PResult<ParsedAwyEdge> {
     )
     .parse_next(input)?;
 
-    let direction: char = trace("direction", preceded(space1, any)).parse_next(input)?;
+    let direction: char =
+        trace("direction", preceded(space1, any)).parse_next(input)?;
     let is_high = trace(
         "check high",
         dispatch! { preceded(space1, dec_uint::<_, u8, _>);
@@ -166,8 +169,10 @@ fn parse_row(input: &mut &str) -> PResult<ParsedAwyEdge> {
         },
     )
     .parse_next(input)?;
-    let base_fl: u16 = trace("base FL", preceded(space1, dec_uint)).parse_next(input)?;
-    let top_fl: u16 = trace("top FL", preceded(space1, dec_uint)).parse_next(input)?;
+    let base_fl: u16 =
+        trace("base FL", preceded(space1, dec_uint)).parse_next(input)?;
+    let top_fl: u16 =
+        trace("top FL", preceded(space1, dec_uint)).parse_next(input)?;
     let names: Vec<heapless::String<5>> = trace(
         "section names",
         delimited(space1, separated(1.., parse_fixed_str::<5>, "-"), space0),

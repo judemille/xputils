@@ -15,7 +15,9 @@ pub enum DsfError {
     #[snafu(display("An I/O error occurred!"))]
     #[snafu(context(false))]
     IoError { source: std::io::Error },
-    #[snafu(display("Internal error. Tried to access a bad offset within the file."))]
+    #[snafu(display(
+        "Internal error. Tried to access a bad offset within the file."
+    ))]
     BadOffset,
     #[snafu(display("The file is not valid DSF."))]
     InvalidDsf,
