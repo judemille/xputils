@@ -16,13 +16,14 @@ use winnow::{
     ascii::{dec_uint, space0, space1},
     combinator::{delimited, fail, preceded, separated, success},
     dispatch,
+    stream::AsChar,
     token::any,
     trace::trace,
     PResult, Parser,
 };
 
 use crate::navdata::{
-    match_wpt_predicate, parse_fixed_str, BadLastLineSnafu, Header,
+    match_wpt_predicate, take_hstring_till, BadLastLineSnafu, Header,
     InvalidAwyDirSnafu, NavEdge, NavEntry, ParseError, ParseSnafu, ParsedNodeRef,
     ParsedNodeRefType, ReferencedNonexistentWptSnafu,
 };
@@ -126,11 +127,16 @@ struct ParsedAwyEdge {
 }
 
 fn parse_row(input: &mut &str) -> PResult<ParsedAwyEdge> {
-    let first_ident =
-        trace("first waypoint ident", parse_fixed_str::<5>).parse_next(input)?;
-    let first_icao_region =
-        trace("first waypoint ICAO region", parse_fixed_str::<2>)
-            .parse_next(input)?;
+    let first_ident = trace(
+        "first waypoint ident",
+        take_hstring_till::<5, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let first_icao_region = trace(
+        "first waypoint ICAO region",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
     let first_typ: ParsedNodeRefType = trace(
         "first waypoint type",
         dispatch! {preceded(space1, dec_uint);
@@ -142,11 +148,16 @@ fn parse_row(input: &mut &str) -> PResult<ParsedAwyEdge> {
     )
     .parse_next(input)?;
 
-    let second_ident =
-        trace("second waypoint ident", parse_fixed_str::<5>).parse_next(input)?;
-    let second_icao_region =
-        trace("second waypoint ICAO region", parse_fixed_str::<2>)
-            .parse_next(input)?;
+    let second_ident = trace(
+        "second waypoint ident",
+        take_hstring_till::<5, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let second_icao_region = trace(
+        "second waypoint ICAO region",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
     let second_typ: ParsedNodeRefType = trace(
         "second waypoint type",
         dispatch! {preceded(space1, dec_uint);
@@ -175,7 +186,11 @@ fn parse_row(input: &mut &str) -> PResult<ParsedAwyEdge> {
         trace("top FL", preceded(space1, dec_uint)).parse_next(input)?;
     let names: Vec<heapless::String<5>> = trace(
         "section names",
-        delimited(space1, separated(1.., parse_fixed_str::<5>, "-"), space0),
+        delimited(
+            space1,
+            separated(1.., take_hstring_till::<5, _>(AsChar::is_space), "-"),
+            space0,
+        ),
     )
     .parse_next(input)?;
     Ok(ParsedAwyEdge {

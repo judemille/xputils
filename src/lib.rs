@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "RUSTC_IS_NIGHTLY", feature(generic_const_exprs))]
+#![cfg_attr(RUSTC_IS_NIGHTLY, feature(generic_const_exprs))]
 
 // SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
 //

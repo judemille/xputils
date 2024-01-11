@@ -11,6 +11,7 @@ use winnow::{
     ascii::{dec_uint, float, space1},
     combinator::{fail, preceded, success},
     dispatch,
+    stream::AsChar,
     token::any,
     trace::trace,
     PResult, Parser,
@@ -19,9 +20,9 @@ use winnow::{
 use crate::navdata::{
     match_wpt_predicate,
     nav::{Navaid, TypeSpecificData},
-    parse_fixed_str, BadLastLineSnafu, ConflictingHoldLegLengthsSnafu, DataVersion,
-    Header, InvalidHoldDirSnafu, NavEdge, NavEntry, ParseError, ParseSnafu,
-    ParsedNodeRef, ParsedNodeRefType, ReferencedNonexistentWptSnafu,
+    take_hstring_till, BadLastLineSnafu, ConflictingHoldLegLengthsSnafu,
+    DataVersion, Header, InvalidHoldDirSnafu, NavEdge, NavEntry, ParseError,
+    ParseSnafu, ParsedNodeRef, ParsedNodeRefType, ReferencedNonexistentWptSnafu,
     UnsupportedVersionSnafu,
 };
 
@@ -189,11 +190,19 @@ struct ParsedEdge {
 }
 
 fn parse_row(input: &mut &str) -> PResult<ParsedEdge> {
-    let hold_point_ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let icao_region =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
-    let terminal_region =
-        trace("terminal region", parse_fixed_str::<4>).parse_next(input)?;
+    let hold_point_ident =
+        trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+            .parse_next(input)?;
+    let icao_region = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let terminal_region = trace(
+        "terminal region",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
     let point_typ: ParsedNodeRefType = trace(
         "point type",
         dispatch! { preceded(space1, dec_uint);

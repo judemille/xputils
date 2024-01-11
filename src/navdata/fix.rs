@@ -14,13 +14,14 @@ use winnow::{
     ascii::{dec_uint, float, space0, space1},
     combinator::{opt, preceded, rest},
     prelude::*,
+    stream::AsChar,
     trace::trace,
     PResult,
 };
 
 use crate::navdata::{
-    parse_fixed_str, BadLastLineSnafu, DataVersion, Header, ParseError, ParseSnafu,
-    StringTooLarge, UnsupportedVersionSnafu,
+    take_hstring_till, BadLastLineSnafu, DataVersion, Header, ParseError,
+    ParseSnafu, StringTooLarge, UnsupportedVersionSnafu,
 };
 
 #[derive(Debug)]
@@ -185,11 +186,16 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
 fn parse_row(input: &mut &str) -> PResult<Fix> {
     let lat: f64 = trace("latitude", preceded(space0, float)).parse_next(input)?;
     let lon: f64 = trace("longitude", preceded(space1, float)).parse_next(input)?;
-    let ident = trace("ident", parse_fixed_str::<8>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<8, _>(AsChar::is_space))
+        .parse_next(input)?;
     let terminal_area =
-        trace("terminal area", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+        trace("terminal area", take_hstring_till::<4, _>(AsChar::is_space))
+            .parse_next(input)?;
+    let icao_region = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
     let funny_flags: u32 =
         trace("waypoint flags", preceded(space1, dec_uint)).parse_next(input)?;
     let (typ, func, proc) = parse_wpt_flags(funny_flags, terminal_area != "ENRT");

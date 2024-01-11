@@ -18,13 +18,13 @@ use winnow::{
     combinator::{delimited, dispatch, fail, peek, preceded, rest},
     prelude::*,
     stream::AsChar,
-    token::take_till1,
+    token::take_till,
     trace::trace,
 };
 
 use crate::navdata::{
-    parse_fixed_str, BadLastLineSnafu, DataVersion, Header, ParseError, ParseSnafu,
-    UnsupportedVersionSnafu,
+    take_hstring_till, BadLastLineSnafu, DataVersion, Header, ParseError,
+    ParseSnafu, UnsupportedVersionSnafu,
 };
 
 pub(super) struct Navaids {
@@ -278,11 +278,18 @@ fn parse_ndb(input: &mut &str) -> PResult<Navaid> {
         .parse_next(input)?
         .into();
     let flags: f32 = trace("flags", preceded(space1, float)).parse_next(input)?;
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let terminal_region =
-        trace("terminal region", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let terminal_region = trace(
+        "terminal region",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
     let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
@@ -312,11 +319,15 @@ fn parse_vor(input: &mut &str) -> PResult<Navaid> {
     let slaved_variation: f32 =
         trace("slaved variation, degrees", preceded(space1, float))
             .parse_next(input)?;
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
     let _ = trace("ensure terminal region for VOR is ENRT", " ENRT")
         .parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
     let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
@@ -351,7 +362,7 @@ fn parse_loc(input: &mut &str) -> PResult<Navaid> {
     // Listen, the specification about the way this number works is really funny.
     let funny_number: Decimal = trace(
         "funny course true + mag number",
-        preceded(space1, take_till1(|c: char| c.is_space())),
+        preceded(space1, take_till(1.., |c: char| c.is_space())),
     )
     .try_map(|s: &str| s.parse())
     .parse_next(input)?;
@@ -360,12 +371,20 @@ fn parse_loc(input: &mut &str) -> PResult<Navaid> {
         .to_f32()
         .unwrap_or(f32::NAN);
     let crs_true: f32 = crs_true.to_f32().unwrap_or(f32::NAN);
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let airport_icao =
-        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
-    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let airport_icao = trace(
+        "airport ICAO code",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let rwy = trace("runway", take_hstring_till::<3, _>(AsChar::is_space))
+        .parse_next(input)?;
     let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
@@ -398,7 +417,7 @@ fn parse_gs(input: &mut &str) -> PResult<Navaid> {
     // Listen, the specification about the way this number works is really funny.
     let funny_number: Decimal = trace(
         "funny course true + glide angle number",
-        preceded(space1, take_till1(|c: char| c.is_space())),
+        preceded(space1, take_till(1.., |c: char| c.is_space())),
     )
     .try_map(|s: &str| s.parse())
     .parse_next(input)?;
@@ -407,12 +426,20 @@ fn parse_gs(input: &mut &str) -> PResult<Navaid> {
         .trunc()
         .to_u16()
         .unwrap_or(u16::MAX);
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let airport_icao =
-        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
-    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let airport_icao = trace(
+        "airport ICAO code",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let rwy = trace("runway", take_hstring_till::<3, _>(AsChar::is_space))
+        .parse_next(input)?;
     let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
@@ -447,13 +474,22 @@ fn parse_mkr(input: &mut &str) -> PResult<Navaid> {
     let loc_crs_true: f32 =
         trace("localizer course, true degrees", preceded(space1, float))
             .parse_next(input)?;
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let airport_icao =
-        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
-    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
-    let name = trace("name", parse_fixed_str::<2>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let airport_icao = trace(
+        "airport ICAO code",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let rwy = trace("runway", take_hstring_till::<3, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let name = trace("name", take_hstring_till::<2, _>(AsChar::is_space))
+        .parse_next(input)?;
     Ok(Navaid {
         lat: lead.lat,
         lon: lead.lon,
@@ -483,11 +519,18 @@ fn parse_dme(input: &mut &str) -> PResult<Navaid> {
     let service_volume: u16 =
         trace("service volume", preceded(space1, dec_uint)).parse_next(input)?;
     let bias: f32 = trace("bias", preceded(space1, float)).parse_next(input)?;
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let terminal_region =
-        trace("terminal region", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let terminal_region = trace(
+        "terminal region",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
     let name = trace("name", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
@@ -519,12 +562,20 @@ fn parse_fpap(input: &mut &str) -> PResult<Navaid> {
         preceded(space1, float),
     )
     .parse_next(input)?;
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let airport_icao =
-        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
-    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let airport_icao = trace(
+        "airport ICAO code",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let rwy = trace("runway", take_hstring_till::<3, _>(AsChar::is_space))
+        .parse_next(input)?;
     let perf = trace("performance type", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
@@ -553,7 +604,7 @@ fn parse_gls(input: &mut &str) -> PResult<Navaid> {
     // Listen, the specification about the way this number works is really funny.
     let funny_number: Decimal = trace(
         "funny final approach course + glide path angle number",
-        preceded(space1, take_till1(|c: char| c.is_space())),
+        preceded(space1, take_till(1.., |c: char| c.is_space())),
     )
     .try_map(|s: &str| s.parse())
     .parse_next(input)?;
@@ -563,12 +614,20 @@ fn parse_gls(input: &mut &str) -> PResult<Navaid> {
         .trunc()
         .to_u16()
         .unwrap_or(u16::MAX);
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let airport_icao =
-        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
-    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let airport_icao = trace(
+        "airport ICAO code",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let rwy = trace("runway", take_hstring_till::<3, _>(AsChar::is_space))
+        .parse_next(input)?;
     let ref_path_ident = trace("ref path ident", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();
@@ -599,7 +658,7 @@ fn parse_threshold(input: &mut &str) -> PResult<Navaid> {
     // Listen, the specification about the way this number works is really funny.
     let funny_number: Decimal = trace(
         "funny final approach course + glide path angle number",
-        preceded(space1, take_till1(|c: char| c.is_space())),
+        preceded(space1, take_till(1.., |c: char| c.is_space())),
     )
     .try_map(|s: &str| s.parse())
     .parse_next(input)?;
@@ -609,12 +668,20 @@ fn parse_threshold(input: &mut &str) -> PResult<Navaid> {
         .trunc()
         .to_u16()
         .unwrap_or(u16::MAX);
-    let ident = trace("ident", parse_fixed_str::<5>).parse_next(input)?;
-    let airport_icao =
-        trace("airport ICAO code", parse_fixed_str::<4>).parse_next(input)?;
-    let icao_region_code =
-        trace("ICAO region code", parse_fixed_str::<2>).parse_next(input)?;
-    let rwy = trace("runway", parse_fixed_str::<3>).parse_next(input)?;
+    let ident = trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
+        .parse_next(input)?;
+    let airport_icao = trace(
+        "airport ICAO code",
+        take_hstring_till::<4, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let icao_region_code = trace(
+        "ICAO region code",
+        take_hstring_till::<2, _>(AsChar::is_space),
+    )
+    .parse_next(input)?;
+    let rwy = trace("runway", take_hstring_till::<3, _>(AsChar::is_space))
+        .parse_next(input)?;
     let ref_path_ident = trace("ref path ident", delimited(space1, rest, space0))
         .parse_next(input)?
         .to_owned();

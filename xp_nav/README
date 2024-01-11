@@ -1,5 +1,9 @@
 Put your X-Plane navdata files here if doing unit testing or using the binary examples
 for navdata. The only CIFP files used in testing are the following, for variety:
+
 - EDDF.dat
-- LPMA.dat
 - KSFO.dat
+- LPMA.dat
+- MROC.dat
+
+Feel free to get rid of all other CIFP files.

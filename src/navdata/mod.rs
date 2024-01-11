@@ -8,9 +8,6 @@ pub mod fix;
 pub mod hold;
 pub mod nav;
 
-#[cfg(feature = "RUSTC_IS_NIGHTLY")]
-use const_format::concatcp;
-
 use petgraph::graph::{DiGraph, NodeIndex};
 use snafu::{prelude::*, Backtrace};
 use std::{
@@ -21,12 +18,12 @@ use std::{
 };
 use winnow::{
     ascii::{digit1, space0, space1},
-    combinator::{fail, preceded, rest, success},
+    combinator::{cut_err, fail, preceded, rest, success},
     dispatch,
-    error::ContextError,
+    error::{ContextError, ErrMode, StrContext},
     prelude::*,
     stream::AsChar,
-    token::{take, take_till1, take_until1},
+    token::{take, take_till, take_until1},
     trace::trace,
 };
 
@@ -314,20 +311,27 @@ fn parse_header_after_bom<'a>(
     }
 }
 
-fn parse_fixed_str<const N: usize>(
-    input: &mut &str,
-) -> PResult<heapless::String<N>> {
-    #[cfg(feature = "RUSTC_IS_NIGHTLY")]
-    const TRACE_NOTE: &str = concatcp!("parse string of maximum length `", N, "`");
-    #[cfg(not(feature = "RUSTC_IS_NIGHTLY"))]
+fn take_hstring_till<const N: usize, F: Fn(char) -> bool + Copy>(
+    till: F,
+) -> impl Fn(&mut &str) -> PResult<heapless::String<N>> {
     const TRACE_NOTE: &str = "parse string of fixed maximum length";
-    trace(
-        TRACE_NOTE,
-        preceded(space1, take_till1(|c: char| c.is_space())).try_map(|id: &str| {
-            heapless::String::<N>::try_from(id).map_err(|()| StringTooLarge)
-        }),
+    move |input: &mut &str| {
+        trace(
+            TRACE_NOTE,
+            take_till(0..=N, till).try_map(|id: &str| {
+                heapless::String::<N>::try_from(id).map_err(|()| StringTooLarge)
+            }),
+        )
+        .parse_next(input)
+    }
+}
+
+fn fixed_hstring_till<'a, const N: usize, F: Fn(char) -> bool + Copy>(
+    till: F,
+) -> impl Parser<&'a str, heapless::String<N>, ContextError> {
+    cut_err(take_hstring_till(till).verify(|hs| hs.len() == N)).context(
+        StrContext::Label("trying to parse string with exact length"),
     )
-    .parse_next(input)
 }
 
 fn match_wpt_predicate<'a>(
