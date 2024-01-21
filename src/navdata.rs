@@ -36,6 +36,7 @@ use winnow::{
 use chumsky::{
     extra::{Full, ParserExtra},
     prelude::*,
+    text::newline,
     Parser as CParser,
 };
 
@@ -382,24 +383,6 @@ fn parse_header<F: Read + BufRead>(
         })
 }
 
-fn parse_header_c<'a, F: Read + BufRead>(
-    verify_type: impl Fn(
-        &'a str,
-        <&'a str as Input<'a>>::Span,
-    ) -> Result<&'a str, Rich<'a, char>>,
-    lines: &mut Lines<F>,
-) -> Result<Header, ParseError> {
-    lines.next().ok_or(ParseError::MissingLine).and_then(|l| {
-        let bom = l?;
-        if bom != "A" && bom != "I" {
-            return BadBOMSnafu { bom }.fail();
-        }
-        Ok(())
-    })?;
-    lines.next().ok_or(ParseError::MissingLine)?;
-    todo!()
-}
-
 fn parse_header_after_bom<'a>(
     verify_type: impl Fn(&str) -> bool,
 ) -> impl winnow::Parser<&'a str, Header, ContextError> {
@@ -455,23 +438,25 @@ fn parse_header_after_bom<'a>(
 type VerifyStr<'a> =
     dyn Fn(&'a str, <&'a str as Input<'a>>::Span) -> Result<&'a str, Rich<'a, char>>;
 
-fn parse_header_after_bom_c<'a>(
-    verify_type: impl Fn(
-        &'a str,
-        <&'a str as Input<'a>>::Span,
-    ) -> Result<&'a str, Rich<'a, char>>,
-) -> impl CParser<'a, &'a str, Header> {
-    let data_ver = chum_uint::<u32>(None).try_map(|v, span| match v {
-        1100 => Ok(DataVersion::XP1100),
-        1101 => Ok(DataVersion::XP1101),
-        1140 => Ok(DataVersion::XP1140),
-        1150 => Ok(DataVersion::XP1150),
-        1200 => Ok(DataVersion::XP1200),
-        _ => Err(Rich::custom(
-            span,
-            format!("unrecognized data version `{v}`"),
-        )),
-    });
+fn parse_header_c<'a>(
+    verify_type: Rc<VerifyStr<'a>>,
+) -> impl CParser<'a, &'a str, Header, extra::Err<Rich<'a, char>>> + Clone {
+    let bom =
+        chumsky::primitive::one_of::<_, &'a str, extra::Err<Rich<'a, char>>>("IA");
+
+    let data_ver = chum_uint::<u32>(None)
+        .try_map(|v, span| match v {
+            1100 => Ok(DataVersion::XP1100),
+            1101 => Ok(DataVersion::XP1101),
+            1140 => Ok(DataVersion::XP1140),
+            1150 => Ok(DataVersion::XP1150),
+            1200 => Ok(DataVersion::XP1200),
+            _ => Err(Rich::custom(
+                span,
+                format!("unrecognized data version `{v}`"),
+            )),
+        })
+        .labelled("data version");
 
     let cycle = chum_uint::<u16>(Some(Rc::new(verify_exact_length::<4>)))
         .labelled("AIRAC cycle");
@@ -479,7 +464,33 @@ fn parse_header_after_bom_c<'a>(
     let build = chum_uint::<u32>(Some(Rc::new(verify_exact_length::<8>)))
         .labelled("data build number");
 
-    chumsky::primitive::todo()
+    let metadata = none_of('.')
+        .repeated()
+        .to_slice()
+        .try_map(move |i, s| (verify_type.as_ref())(i, s))
+        .then_ignore(just('.'))
+        .labelled("metadata type");
+
+    let copyright = chumsky::primitive::any()
+        .and_is(text::newline().not())
+        .repeated()
+        .to_slice()
+        .labelled("file copyright");
+
+    group((
+        bom.ignore_then(text::newline().ignored()),
+        data_ver.then_ignore(just(" Version - data cycle ")),
+        cycle.then_ignore(just(", build ")),
+        build.then_ignore(just(", metadata ")),
+        metadata.then_ignore(text::inline_whitespace()).ignored(),
+        copyright.then_ignore(text::newline()),
+    ))
+    .map(|((), version, cycle, build, (), copyright)| Header {
+        version,
+        cycle,
+        build,
+        copyright: copyright.to_owned(),
+    })
 }
 
 fn chum_int<I>(
@@ -551,6 +562,18 @@ fn verify_max_length<'a, const N: usize>(
             ),
         ))
     }
+}
+
+fn hstring_c<'a, const N: usize>(
+    take_until: chumsky::primitive::Any<&'a str, extra::Err<Rich<'a, char>>>,
+    verify_length: Rc<VerifyStr<'a>>,
+) -> impl CParser<'a, &'a str, heapless::String<N>, extra::Err<Rich<'a, char>>> {
+    chumsky::primitive::any()
+        .and_is(take_until.not())
+        .repeated()
+        .to_slice()
+        .try_map(move |i, s| (verify_length.as_ref())(i, s))
+        .map(|i| heapless::String::from_str(i).unwrap()) // UNWRAP: Length verified.
 }
 
 fn take_hstring_till<const N: usize, F: Fn(char) -> bool + Copy>(
