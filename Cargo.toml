@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+# SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com>
 #
 # SPDX-License-Identifier: Parity-7.0.0
 
@@ -23,9 +23,12 @@ categories = [
 
 [dependencies]
 byteorder = { version = "~1.5", optional = true }
+chumsky = { version = "~1.0.0-alpha.6", optional = true, features = ["label", "either"] }
 const_format = { version = "~0.2", optional = true }
+either = "~1.9"
 heapless = "~0.8"
 itertools = "~0.12"
+num = "~0.4"
 num_enum = "~0.7"
 petgraph = { version = "~0.6", optional = true, default-features = false }
 rust_decimal = "~1.33"
@@ -39,8 +42,8 @@ rustc_version = "0.4"
 
 [features]
 dsf = ["dep:byteorder", "dep:sevenz-rust"]
-navdata = ["dep:const_format", "dep:petgraph", "dep:winnow"]
-navdata_debug = ["winnow/debug"]
+navdata = ["dep:chumsky", "dep:const_format", "dep:petgraph", "dep:winnow"]
+parser_debug = ["winnow/debug"]
 
 [lints.rust]
 unsafe_code = "deny"
@@ -48,7 +51,7 @@ unsafe_code = "deny"
 [lints.clippy]
 pedantic = "warn"
 float_cmp_const = "deny"
-self_named_module_files = "deny"
+mod_module_files = "deny"
 semicolon_inside_block = "deny"
 todo = "warn"
 try_err = "deny"

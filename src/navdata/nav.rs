@@ -1,5 +1,5 @@
 #![allow(clippy::module_name_repetitions)]
-// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com>
 //
 // SPDX-License-Identifier: Parity-7.0.0
 
@@ -20,6 +20,7 @@ use winnow::{
     stream::AsChar,
     token::take_till,
     trace::trace,
+    Located,
 };
 
 use crate::navdata::{
@@ -203,16 +204,15 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .map(|line| {
             let line = line?;
-            let ret =
-                trace("parse navaid row", parse_row)
-                    .parse(&line)
-                    .map_err(|e| {
-                        ParseSnafu {
-                            rendered: e.to_string(),
-                            stage: "navaid row",
-                        }
-                        .build()
-                    });
+            let ret = trace("parse navaid row", parse_row)
+                .parse(Located::new(&line))
+                .map_err(|e| {
+                    ParseSnafu {
+                        rendered: e.to_string(),
+                        stage: "navaid row",
+                    }
+                    .build()
+                });
             ret
         })
         .collect();
@@ -228,7 +228,7 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
     Ok(Navaids { header, entries })
 }
 
-fn parse_row(input: &mut &str) -> PResult<Navaid> {
+fn parse_row(input: &mut Located<&str>) -> PResult<Navaid> {
     let navaid = trace(
         "match row code and then parse type",
         dispatch! {peek(preceded(space0, dec_uint));
@@ -255,7 +255,7 @@ struct RowLead {
     elevation: i32,
 }
 
-fn parse_row_lead(input: &mut &str) -> PResult<RowLead> {
+fn parse_row_lead(input: &mut Located<&str>) -> PResult<RowLead> {
     let row_code: u8 =
         trace("row code", preceded(space0, dec_uint)).parse_next(input)?;
     let lat: f64 = trace("latitude", preceded(space1, float)).parse_next(input)?;
@@ -270,7 +270,7 @@ fn parse_row_lead(input: &mut &str) -> PResult<RowLead> {
     })
 }
 
-fn parse_ndb(input: &mut &str) -> PResult<Navaid> {
+fn parse_ndb(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let freq_khz: u16 =
         trace("frequency, kHz", preceded(space1, dec_uint)).parse_next(input)?;
@@ -309,7 +309,7 @@ fn parse_ndb(input: &mut &str) -> PResult<Navaid> {
     })
 }
 
-fn parse_vor(input: &mut &str) -> PResult<Navaid> {
+fn parse_vor(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let freq_10khz: u32 =
         trace("frequency, 10 kHz", preceded(space1, dec_uint)).parse_next(input)?;
@@ -347,7 +347,7 @@ fn parse_vor(input: &mut &str) -> PResult<Navaid> {
 }
 
 #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-fn parse_loc(input: &mut &str) -> PResult<Navaid> {
+fn parse_loc(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let is_with_ils = match lead.row_code {
         4 => true,
@@ -407,7 +407,7 @@ fn parse_loc(input: &mut &str) -> PResult<Navaid> {
     })
 }
 
-fn parse_gs(input: &mut &str) -> PResult<Navaid> {
+fn parse_gs(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let freq_10khz: u32 =
         trace("frequency, 10 kHz", preceded(space1, dec_uint)).parse_next(input)?;
@@ -461,7 +461,7 @@ fn parse_gs(input: &mut &str) -> PResult<Navaid> {
     })
 }
 
-fn parse_mkr(input: &mut &str) -> PResult<Navaid> {
+fn parse_mkr(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let typ = match lead.row_code {
         7 => MarkerType::Outer,
@@ -506,7 +506,7 @@ fn parse_mkr(input: &mut &str) -> PResult<Navaid> {
     })
 }
 
-fn parse_dme(input: &mut &str) -> PResult<Navaid> {
+fn parse_dme(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let display_freq = match lead.row_code {
         12 => false,
@@ -551,7 +551,7 @@ fn parse_dme(input: &mut &str) -> PResult<Navaid> {
     })
 }
 
-fn parse_fpap(input: &mut &str) -> PResult<Navaid> {
+fn parse_fpap(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let channel: u32 =
         trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
@@ -596,7 +596,7 @@ fn parse_fpap(input: &mut &str) -> PResult<Navaid> {
     })
 }
 
-fn parse_gls(input: &mut &str) -> PResult<Navaid> {
+fn parse_gls(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let channel: u32 =
         trace("channel", preceded(space1, dec_uint)).parse_next(input)?;
@@ -648,7 +648,7 @@ fn parse_gls(input: &mut &str) -> PResult<Navaid> {
     })
 }
 
-fn parse_threshold(input: &mut &str) -> PResult<Navaid> {
+fn parse_threshold(input: &mut Located<&str>) -> PResult<Navaid> {
     let lead = trace("row lead", parse_row_lead).parse_next(input)?;
     let channel: u32 =
         trace("channel", preceded(space1, dec_uint)).parse_next(input)?;

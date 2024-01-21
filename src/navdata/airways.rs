@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
-// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com>
 //
 // SPDX-License-Identifier: Parity-7.0.0
 
@@ -19,7 +19,7 @@ use winnow::{
     stream::AsChar,
     token::any,
     trace::trace,
-    PResult, Parser,
+    Located, PResult, Parser,
 };
 
 use crate::navdata::{
@@ -49,13 +49,14 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
     lines
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .try_for_each(|line| -> Result<(), ParseError> {
-            let parsed_edge = parse_row.parse(&line?).map_err(|e| {
-                ParseSnafu {
-                    rendered: e.to_string(),
-                    stage: "airway row",
-                }
-                .build()
-            })?;
+            let parsed_edge =
+                parse_row.parse(Located::new(&line?)).map_err(|e| {
+                    ParseSnafu {
+                        rendered: e.to_string(),
+                        stage: "airway row",
+                    }
+                    .build()
+                })?;
             let first_wpt_idx = nav_graph
                 .node_indices()
                 .find(match_wpt_predicate(&parsed_edge.first, nav_graph))
@@ -126,7 +127,7 @@ struct ParsedAwyEdge {
     names: Vec<heapless::String<5>>,
 }
 
-fn parse_row(input: &mut &str) -> PResult<ParsedAwyEdge> {
+fn parse_row(input: &mut Located<&str>) -> PResult<ParsedAwyEdge> {
     let first_ident = trace(
         "first waypoint ident",
         take_hstring_till::<5, _>(AsChar::is_space),

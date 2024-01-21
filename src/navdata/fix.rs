@@ -1,5 +1,5 @@
 #![allow(clippy::module_name_repetitions)]
-// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com>
 //
 // SPDX-License-Identifier: Parity-7.0.0
 
@@ -12,16 +12,16 @@ use itertools::Itertools;
 use snafu::ensure;
 use winnow::{
     ascii::{dec_uint, float, space0, space1},
-    combinator::{opt, preceded, rest},
+    combinator::{opt, preceded},
     prelude::*,
     stream::AsChar,
     trace::trace,
-    PResult,
+    Located, PResult,
 };
 
 use crate::navdata::{
     take_hstring_till, BadLastLineSnafu, DataVersion, Header, ParseError,
-    ParseSnafu, StringTooLarge, UnsupportedVersionSnafu,
+    ParseSnafu, UnsupportedVersionSnafu,
 };
 
 #[derive(Debug)]
@@ -161,13 +161,15 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .map(|line| {
             let line = line?;
-            let ret = trace("fix row", parse_row).parse(&line).map_err(|e| {
-                ParseSnafu {
-                    rendered: e.to_string(),
-                    stage: "fix row",
-                }
-                .build()
-            });
+            let ret = trace("fix row", parse_row)
+                .parse(Located::new(&line))
+                .map_err(|e| {
+                    ParseSnafu {
+                        rendered: e.to_string(),
+                        stage: "fix row",
+                    }
+                    .build()
+                });
             ret
         })
         .collect();
@@ -183,7 +185,7 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
     Ok(Fixes { header, entries })
 }
 
-fn parse_row(input: &mut &str) -> PResult<Fix> {
+fn parse_row(input: &mut Located<&str>) -> PResult<Fix> {
     let lat: f64 = trace("latitude", preceded(space0, float)).parse_next(input)?;
     let lon: f64 = trace("longitude", preceded(space1, float)).parse_next(input)?;
     let ident = trace("ident", take_hstring_till::<8, _>(AsChar::is_space))
@@ -199,14 +201,8 @@ fn parse_row(input: &mut &str) -> PResult<Fix> {
     let funny_flags: u32 =
         trace("waypoint flags", preceded(space1, dec_uint)).parse_next(input)?;
     let (typ, func, proc) = parse_wpt_flags(funny_flags, terminal_area != "ENRT");
-    let printed_spoken_name = opt(preceded(space1, rest))
-        .try_map(|id: Option<&str>| {
-            id.map(|id| {
-                heapless::String::<32>::try_from(id).map_err(|()| StringTooLarge)
-            })
-            .transpose()
-        })
-        .parse_next(input)?;
+    let printed_spoken_name =
+        opt(preceded(space1, take_hstring_till(|_| false))).parse_next(input)?;
     Ok(Fix {
         lat,
         lon,

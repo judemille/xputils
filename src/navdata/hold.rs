@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com>
 //
 // SPDX-License-Identifier: Parity-7.0.0
 
@@ -14,7 +14,7 @@ use winnow::{
     stream::AsChar,
     token::any,
     trace::trace,
-    PResult, Parser,
+    Located, PResult, Parser,
 };
 
 use crate::navdata::{
@@ -72,8 +72,9 @@ pub(super) fn parse_file_buffered<F: Read + BufRead>(
         .peeking_take_while(|l| l.as_ref().map_or(true, |l| l != "99"))
         .try_for_each(|line| -> Result<(), ParseError> {
             let line = line?;
-            let parsed_edge =
-                trace("hold row", parse_row).parse(&line).map_err(|e| {
+            let parsed_edge = trace("hold row", parse_row)
+                .parse(Located::new(&line))
+                .map_err(|e| {
                     ParseSnafu {
                         rendered: e.to_string(),
                         stage: "hold row",
@@ -189,7 +190,7 @@ struct ParsedEdge {
     max_spd_kts: u16,
 }
 
-fn parse_row(input: &mut &str) -> PResult<ParsedEdge> {
+fn parse_row(input: &mut Located<&str>) -> PResult<ParsedEdge> {
     let hold_point_ident =
         trace("ident", take_hstring_till::<5, _>(AsChar::is_space))
             .parse_next(input)?;

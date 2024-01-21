@@ -1,14 +1,10 @@
-// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com>
 //
 // SPDX-License-Identifier: Parity-7.0.0
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use snafu::prelude::*;
-use std::{
-    collections::HashMap,
-    io::{Read, Seek, SeekFrom},
-    ops::Range,
-};
+use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Snafu, Debug)]
 pub enum DsfError {

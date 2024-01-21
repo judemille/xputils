@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com>
 //
 // SPDX-License-Identifier: Parity-7.0.0
 
@@ -11,6 +11,7 @@ use winnow::{
     stream::AsChar,
     token::{none_of, take_until0},
     trace::trace,
+    Located,
 };
 
 use heapless::String as HString;
@@ -40,8 +41,7 @@ struct SidStarApchRow {
     subsection: Option<char>,
     waypoint_desc_code: Option<HString<4>>,
     turn_dir: Option<char>,
-    // Why, ARINC, why?
-    rnp: Option<f64>,
+    rnp: Option<f32>,
     path_and_term: Option<HString<2>>,
     // Once again: What the fuck, ARINC?
     // This isn't even about the turn direction being *valid*, it's about it being
@@ -51,10 +51,9 @@ struct SidStarApchRow {
     rcmd_navaid_icao_region: Option<HString<2>>,
     rcmd_navaid_section: Option<char>,
     rcmd_navaid_subsection: Option<char>,
-    // Why??????
-    arc_radius_1_1000nm: Option<u64>,
-    theta_1_10deg: Option<u16>,
-    rho_1_10nm: Option<u16>,
+    arc_radius_nm: Option<f64>,
+    theta: Option<f64>,
+    rho: Option<f64>,
     // Except when it isn't magnetic!
     ob_mag_crs: Option<HString<4>>,
     // Fuck you, ARINC!
@@ -97,7 +96,7 @@ struct RwyRow {
     displaced_thresh_dist_ft: u16,
 }
 
-fn parse_row(input: &mut &str) -> PResult<Row> {
+fn parse_row(input: &mut Located<&str>) -> PResult<Row> {
     dispatch! {terminated(alpha1, ':');
         "SID" => parse_ssa_row.map(Row::Sid),
         "STAR" => parse_ssa_row.map(Row::Star),
@@ -123,9 +122,9 @@ fn handle_empty<const N: usize>(s: HString<N>) -> Option<HString<N>> {
     }
 }
 
-fn parse_ssa_row(input: &mut &str) -> PResult<Box<SidStarApchRow>> {
+fn parse_ssa_row(input: &mut Located<&str>) -> PResult<Box<SidStarApchRow>> {
     seq! {
-        SidStarApchRow{
+        SidStarApchRow {
             sequence: trace("sequence", dec_uint),
             _: (space0, ','),
             route_typ: trace("route type", none_of(',')),
@@ -146,13 +145,14 @@ fn parse_ssa_row(input: &mut &str) -> PResult<Box<SidStarApchRow>> {
             _: (space0, ','),
             turn_dir: trace("turn direction", opt(none_of([' ', ',']))),
             _: (space0, ','),
+            // Why, ARINC, why?
             rnp: trace("RNP",
                     opt(fixed_hstring_till::<3, _>(comma)
                         .verify(|s| s.len() == 3)
-                        .try_map(|rnp_str| -> Result<f64, <f64 as FromStr>::Err> {
+                        .try_map(|rnp_str| -> Result<f32, <f32 as FromStr>::Err> {
                             let (significand, exponent) = rnp_str.split_at(2);
-                            let (significand, exponent) = (significand.parse::<f64>()?, exponent.parse::<f64>()?);
-                            Ok(significand * (10f64.powf(exponent * -1f64)))
+                            let (significand, exponent) = (significand.parse::<f32>()?, exponent.parse::<f32>()?);
+                            Ok(significand * (10f32.powf(exponent * -1f32)))
             }))),
             _: (space0, ','),
             path_and_term: trace("path and term.", fixed_hstring_till(comma)).map(handle_empty),
@@ -167,11 +167,20 @@ fn parse_ssa_row(input: &mut &str) -> PResult<Box<SidStarApchRow>> {
             _: (space0, ','),
             rcmd_navaid_subsection: trace("rcmd navaid data subsection", opt(none_of([' ', ',']))),
             _: (space0, ','),
-            arc_radius_1_1000nm: trace("arc radius, 1/1000 nm", opt(dec_uint)),
+            arc_radius_nm: trace("arc radius, 1/1000 nm",
+                opt(float)
+                .map(|aro| aro.map(|ar: f64| ar * 1000f64))
+            ),
             _: (space0, ','),
-            theta_1_10deg: trace("θ, 1/10°", opt(dec_uint)),
+            theta: trace("θ, 1/10°",
+                opt(float)
+                .map(|th| th.map(|th: f64| th * 10f64))
+            ),
             _: (space0, ','),
-            rho_1_10nm: trace("ρ 'rho', 1/10nm", opt(dec_uint)),
+            rho: trace("ρ, 1/10nm",
+                opt(float)
+                .map(|rho| rho.map(|rho: f64| rho * 10f64))
+            ),
             _: (space0, ','),
             ob_mag_crs: trace("outbound magnetic course", fixed_hstring_till(comma)).map(handle_empty),
             _: (space0, ','),
@@ -213,7 +222,7 @@ fn parse_ssa_row(input: &mut &str) -> PResult<Box<SidStarApchRow>> {
     .map(Box::new)
 }
 
-fn parse_rwy_row(input: &mut &str) -> PResult<Box<RwyRow>> {
+fn parse_rwy_row(input: &mut Located<&str>) -> PResult<Box<RwyRow>> {
     seq! {
         RwyRow {
             rwy_ident: take_hstring_till(comma),
@@ -253,7 +262,7 @@ mod tests {
     };
 
     use snafu::{OptionExt, Report, ResultExt, Whatever};
-    use winnow::Parser;
+    use winnow::{Located, Parser};
 
     use crate::navdata::cifp::{parse_row, Row};
 
@@ -280,7 +289,7 @@ mod tests {
                 .into_iter()
                 .map(|line| {
                     parse_row
-                        .parse(&line)
+                        .parse(Located::new(&line))
                         .map_err(|e| e.to_string())
                         .whatever_context("failed to parse a row in KSFO.dat")
                 })

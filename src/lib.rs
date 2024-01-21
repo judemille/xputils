@@ -1,6 +1,6 @@
 #![cfg_attr(RUSTC_IS_NIGHTLY, feature(generic_const_exprs))]
 
-// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com
+// SPDX-FileCopyrightText: 2024 Julia DeMille <me@jdemille.com>
 //
 // SPDX-License-Identifier: Parity-7.0.0
 
