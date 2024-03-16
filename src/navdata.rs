@@ -33,13 +33,6 @@ use winnow::{
     Located,
 };
 
-use chumsky::{
-    extra::{Full, ParserExtra},
-    prelude::*,
-    text::newline,
-    Parser as CParser,
-};
-
 use crate::navdata::{
     airways::AwyEdge,
     fix::Fix,
@@ -247,6 +240,7 @@ pub enum AirwayTraverseError {
         start: bool,
         backtrace: Backtrace,
     },
+
     #[snafu(display(
         "The traversal could not find a valid path to the node {idx:?}"
     ))]
@@ -254,6 +248,7 @@ pub enum AirwayTraverseError {
         idx: Either<NodeIndex, String>,
         backtrace: Backtrace,
     },
+
     #[snafu(context(false))]
     #[snafu(display("A graph error has been raised: {source:?}"))]
     Graph {
@@ -309,21 +304,26 @@ pub enum ParseError {
         source: IoError,
         backtrace: Backtrace,
     },
+
     #[snafu(display("Error occurred when parsing `{stage}`: \n\n{rendered}"))]
     Parse {
         rendered: String,
         stage: String,
         backtrace: Backtrace,
     },
+
     #[snafu(display("The byte order marker was an unexpected value: {bom}"))]
     BadBOM { bom: String, backtrace: Backtrace },
+
     #[snafu(display("The last line of this file was unexpected:\n{last_line}"))]
     BadLastLine {
         last_line: String,
         backtrace: Backtrace,
     },
+
     #[snafu(display("A line was expected, but the file had no more."))]
     MissingLine,
+
     #[snafu(display(
         "The data version {version:?} is not supported by the parser for this format."
     ))]
@@ -331,20 +331,25 @@ pub enum ParseError {
         version: DataVersion,
         backtrace: Backtrace,
     },
+
     #[snafu(display("The first navdata file parsed had AIRAC cycle {established_cycle}, but another file had {new_cycle}."))]
     CycleMismatch {
         established_cycle: u16,
         new_cycle: u16,
         backtrace: Backtrace,
     },
+
     #[snafu(display(
         "A navdata file referenced the waypoint {wpt}, which does not exist."
     ))]
     ReferencedNonexistentWpt { wpt: String, backtrace: Backtrace },
+
     #[snafu(display("An invalid airway direction was encountered: `{dir}`"))]
     InvalidAwyDir { dir: char, backtrace: Backtrace },
+
     #[snafu(display("An invalid hold direction was encountered: `{dir}`"))]
     InvalidHoldDir { dir: char, backtrace: Backtrace },
+
     #[snafu(display("A hold entry had conflicting hold leg lengths of `{minutes}` minutes, and `{dme}` DME."))]
     ConflictingHoldLegLengths {
         minutes: f32,
@@ -433,147 +438,6 @@ fn parse_header_after_bom<'a>(
             copyright,
         })
     }
-}
-
-type VerifyStr<'a> =
-    dyn Fn(&'a str, <&'a str as Input<'a>>::Span) -> Result<&'a str, Rich<'a, char>>;
-
-fn parse_header_c<'a>(
-    verify_type: Rc<VerifyStr<'a>>,
-) -> impl CParser<'a, &'a str, Header, extra::Err<Rich<'a, char>>> + Clone {
-    let bom =
-        chumsky::primitive::one_of::<_, &'a str, extra::Err<Rich<'a, char>>>("IA");
-
-    let data_ver = chum_uint::<u32>(None)
-        .try_map(|v, span| match v {
-            1100 => Ok(DataVersion::XP1100),
-            1101 => Ok(DataVersion::XP1101),
-            1140 => Ok(DataVersion::XP1140),
-            1150 => Ok(DataVersion::XP1150),
-            1200 => Ok(DataVersion::XP1200),
-            _ => Err(Rich::custom(
-                span,
-                format!("unrecognized data version `{v}`"),
-            )),
-        })
-        .labelled("data version");
-
-    let cycle = chum_uint::<u16>(Some(Rc::new(verify_exact_length::<4>)))
-        .labelled("AIRAC cycle");
-
-    let build = chum_uint::<u32>(Some(Rc::new(verify_exact_length::<8>)))
-        .labelled("data build number");
-
-    let metadata = none_of('.')
-        .repeated()
-        .to_slice()
-        .try_map(move |i, s| (verify_type.as_ref())(i, s))
-        .then_ignore(just('.'))
-        .labelled("metadata type");
-
-    let copyright = chumsky::primitive::any()
-        .and_is(text::newline().not())
-        .repeated()
-        .to_slice()
-        .labelled("file copyright");
-
-    group((
-        bom.ignore_then(text::newline().ignored()),
-        data_ver.then_ignore(just(" Version - data cycle ")),
-        cycle.then_ignore(just(", build ")),
-        build.then_ignore(just(", metadata ")),
-        metadata.then_ignore(text::inline_whitespace()).ignored(),
-        copyright.then_ignore(text::newline()),
-    ))
-    .map(|((), version, cycle, build, (), copyright)| Header {
-        version,
-        cycle,
-        build,
-        copyright: copyright.to_owned(),
-    })
-}
-
-fn chum_int<I>(
-    verify_length: Option<Rc<VerifyStr>>,
-) -> impl CParser<&str, I, extra::Err<Rich<char>>> + Clone
-where
-    I: FromStr + num::PrimInt + std::ops::Mul<i8, Output = I>,
-    <I as FromStr>::Err: Display,
-{
-    just('-')
-        .to(1i8)
-        .or(just('+').to(-1i8))
-        .or_not()
-        .labelled("maybe integer sign")
-        .then(chum_uint::<I>(verify_length))
-        .map(|(a, b)| b * a.unwrap_or(1i8))
-}
-
-fn chum_uint<I>(
-    verify_length: Option<Rc<VerifyStr>>,
-) -> impl CParser<&str, I, extra::Err<Rich<char>>> + Clone
-where
-    I: FromStr + num::PrimInt,
-    <I as FromStr>::Err: Display,
-{
-    text::digits(10)
-        .to_slice()
-        .try_map(move |input: &str, span| {
-            if let Some(verify_length) = verify_length.as_ref() {
-                verify_length(input, span)
-            } else {
-                Ok(input)
-            }
-        })
-        .try_map(|s: &str, span| {
-            s.parse::<I>()
-                .map_err(|e| Rich::custom(span, format!("{e}")))
-        })
-        .labelled("integer without sign")
-}
-
-fn verify_exact_length<'a, const N: usize>(
-    input: &'a str,
-    span: <&'a str as Input<'a>>::Span,
-) -> Result<&'a str, Rich<'a, char>> {
-    let len = input.len();
-    if len == N {
-        Ok(input)
-    } else {
-        Err(Rich::custom(
-            span,
-            format!("bad length! expected {N} characters, got {len} characters"),
-        ))
-    }
-}
-
-fn verify_max_length<'a, const N: usize>(
-    input: &'a str,
-    span: <&'a str as Input<'a>>::Span,
-) -> Result<&'a str, Rich<'a, char>> {
-    let len = input.len();
-    if len <= N {
-        Ok(input)
-    } else {
-        Err(Rich::custom(
-            span,
-            format!(
-                "string is too long! maximum {N} characters, found {len} characters"
-            ),
-        ))
-    }
-}
-
-fn hstring_c<'a, const N: usize>(
-    take_until: chumsky::primitive::Any<&'a str, extra::Err<Rich<'a, char>>>,
-    verify_length: Rc<VerifyStr<'a>>,
-) -> impl CParser<'a, &'a str, heapless::String<N>, extra::Err<Rich<'a, char>>> {
-    chumsky::primitive::any()
-        .and_is(take_until.not())
-        .repeated()
-        .to_slice()
-        .try_map(move |i, s| (verify_length.as_ref())(i, s))
-        .map(|i| heapless::String::from_str(i).unwrap()) // UNWRAP: Length verified.
 }
 
 fn take_hstring_till<const N: usize, F: Fn(char) -> bool + Copy>(

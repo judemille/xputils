@@ -24,8 +24,8 @@ enum Row {
     Star(Box<SidStarApchRow>),
     Apch(Box<SidStarApchRow>),
     Rwy(Box<RwyRow>),
-    /// Cannot find *any* information on how PRDAT rows work. Reading the files isn't
-    /// any use either. Just ignoring for now.
+    // Cannot find *any* information on how PRDAT rows work. Reading the files isn't
+    // any use either. Just ignoring for now.
     PrDat,
 }
 

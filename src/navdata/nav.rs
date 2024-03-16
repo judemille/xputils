@@ -59,6 +59,7 @@ pub enum TypeSpecificData {
         /// The name of this NDB.
         name: String,
     },
+
     Vor {
         /// The frequency of this VOR, in 10s of kHz.
         freq_10khz: u32,
@@ -66,6 +67,7 @@ pub enum TypeSpecificData {
         slaved_variation: f32,
         name: String,
     },
+
     Localizer {
         is_with_ils: bool,
         freq_10khz: u32,
@@ -81,6 +83,7 @@ pub enum TypeSpecificData {
         /// - `SDF`
         name: String,
     },
+
     Glideslope {
         freq_10khz: u32,
         max_range: u16,
@@ -92,6 +95,7 @@ pub enum TypeSpecificData {
         /// Pretty sure this should always be "GS".
         name: String,
     },
+
     MarkerBeacon {
         typ: MarkerType,
         loc_crs_true: f32,
@@ -99,6 +103,7 @@ pub enum TypeSpecificData {
         rwy: heapless::String<3>,
         name: heapless::String<2>,
     },
+
     Dme {
         display_freq: bool,
         paired_freq_10khz: u32,
@@ -107,6 +112,7 @@ pub enum TypeSpecificData {
         terminal_region: heapless::String<4>,
         name: String,
     },
+
     Fpap {
         channel: u32,
         length_offset: f32,
@@ -115,14 +121,17 @@ pub enum TypeSpecificData {
         rwy: heapless::String<3>,
         perf: String,
     },
+
     ThresholdPoint {
         channel: u32,
         thres_cross_height: f32,
         final_app_crs_true: f32,
+
         /// Hundredths of a degree. `u16::MAX` should be interpreted as an error.
         glide_path_angle: u16,
         airport_icao: heapless::String<4>,
         rwy: heapless::String<3>,
+
         /// For the RNAV (GPS) Y 16C at KSEA, this will return
         /// - in XPNAV1200: `W16B`
         /// - in XPNAV1150: `WAAS`
@@ -132,6 +141,7 @@ pub enum TypeSpecificData {
         /// `GP` means unspecified or GLS.
         ref_path_ident: String,
     },
+
     Gls {
         channel: u32,
         final_app_crs_true: f32,

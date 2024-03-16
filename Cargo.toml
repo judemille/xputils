@@ -23,7 +23,6 @@ categories = [
 
 [dependencies]
 byteorder = { version = "~1.5", optional = true }
-chumsky = { version = "~1.0.0-alpha.6", optional = true, features = ["label", "either"] }
 const_format = { version = "~0.2", optional = true }
 either = "~1.9"
 heapless = "~0.8"
@@ -42,7 +41,7 @@ rustc_version = "0.4"
 
 [features]
 dsf = ["dep:byteorder", "dep:sevenz-rust"]
-navdata = ["dep:chumsky", "dep:const_format", "dep:petgraph", "dep:winnow"]
+navdata = ["dep:const_format", "dep:petgraph", "dep:winnow"]
 parser_debug = ["winnow/debug"]
 
 [lints.rust]
